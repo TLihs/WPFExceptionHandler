@@ -6,6 +6,8 @@ using System.Linq;
 using System.Threading.Tasks;
 using System.Windows;
 
+using static WPFExceptionHandler.ExceptionManagement;
+
 namespace ExceptionTest
 {
     /// <summary>
@@ -13,11 +15,15 @@ namespace ExceptionTest
     /// </summary>
     public partial class App : Application
     {
+        App()
+        {
+            CreateExceptionManagement(this, AppDomain.CurrentDomain);
+        }
+
         protected override void OnStartup(StartupEventArgs e)
         {
-            base.OnStartup(e);
-            WPFExceptionHandler.ExceptionManagement.AddAppToExceptionHandler(this);
-            throw new Exception("TestException");
+            LogDebug("Test");
+            //throw new Exception("TestException");
         }
     }
 }
