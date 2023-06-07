@@ -15,7 +15,7 @@ namespace WPFExceptionHandler
 {
     public static class ExceptionManagement
     {
-        private enum LogEntryType
+        public enum LogEntryType
         {
             Info,
             Warning,
@@ -23,20 +23,23 @@ namespace WPFExceptionHandler
             CriticalError
         }
 
+        public delegate void LogDebugAddedEventHandler(object sender, LogDebugAddedEventArgs args);
+
+        public static event LogDebugAddedEventHandler LogDebugAdded;
+        private static void RaiseLogDebugAdded(object sender, LogEntry entry)
+        {
+            LogDebugAdded?.Invoke(sender, new LogDebugAddedEventArgs(entry));
+        }
+
         private static string _exceptionLogPathAlt;
         private static string _exceptionLogPath;
         private static bool _initialized = false;
+        private static bool _includeDebugInformation = true;
         private static FileStream _logFileStream;
         private static Queue<byte[]> _logEntries = new Queue<byte[]>();
 
         public static string ExceptionLogFilePath => string.IsNullOrWhiteSpace(_exceptionLogPathAlt) ? Path.Combine(_exceptionLogPath, DateTime.Now.ToString("yyyy-MM-dd") + ".log") : _exceptionLogPathAlt;
-        public delegate void ExceptionCatchedEventHandler(object sender, ExceptionCatchedEventArgs args);
-
-        public static event ExceptionCatchedEventHandler ExceptionCatched;
-        public static void RaiseExceptionCatchedEvent(object sender, Exception exception)
-        {
-            ExceptionCatched?.Invoke(sender, new ExceptionCatchedEventArgs(exception));
-        }
+        public static bool UseFileLogging { get; set; }
 
         static ExceptionManagement()
         {
@@ -47,9 +50,11 @@ namespace WPFExceptionHandler
                 else
                     LogDebug("ExceptionManagement exited without any fault.");
             });
+
+            UseFileLogging = false;
         }
 
-        public static void CreateExceptionManagement(Application app, AppDomain domain)
+        public static void CreateExceptionManagement(Application app, AppDomain domain, bool includeDebugInformation = true)
         {
             if (_initialized)
             {
@@ -57,6 +62,7 @@ namespace WPFExceptionHandler
                 return;
             }
 
+            _includeDebugInformation = includeDebugInformation;
             string appname = System.Reflection.Assembly.GetEntryAssembly().GetName().Name;
             Debug.Print("BaseDirectory: " + appname);
 
@@ -191,7 +197,9 @@ namespace WPFExceptionHandler
                 _logFileStream = logfileinfo.Open(FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.Read);
 
                 if (newlog)
+                {
                     LogDebug("Log created.");
+                }
                 else
                 {
                     _logFileStream.Position = _logFileStream.Length;
@@ -200,7 +208,7 @@ namespace WPFExceptionHandler
             }
         }
 
-        private static string CreateMessageString(string message, LogEntryType entryType, DateTime timeStamp)
+        public static string CreateMessageString(string message, LogEntryType entryType, DateTime timeStamp)
         {
             string threadname = Thread.CurrentThread.Name;
             string formattedtimestamp = timeStamp.ToString("yyyy-MM-dd hh:mm:ss.fff");
@@ -210,48 +218,61 @@ namespace WPFExceptionHandler
             else
                 return string.Format("{0}: [{1}] ({2}) {3}\r\n", formattedtimestamp, threadname, logentrytype, message);
         }
-        public static void LogDebug(string message) => WriteLogEntry(message, LogEntryType.Info);
-        public static void LogDebugBool(string message, bool value, string trueString, string falseString) => WriteLogEntry(message.Replace("%1", value ? trueString : falseString), LogEntryType.Info);
+
+        private static void WriteLogEntry(string message, LogEntryType entryType)
+        {
+            DateTime timestamp = DateTime.Now;
+
+            if (UseFileLogging)
+                CreateLogFile();
+
+            Task.Run(() =>
+            {
+                string logmessage = CreateMessageString(message, entryType, timestamp);
+                Console.Write(logmessage);
+                byte[] logmessagebytes = Encoding.UTF8.GetBytes(logmessage);
+                if (UseFileLogging)
+                {
+                    try
+                    {
+                        while (_logEntries.Count > 0)
+                            _logFileStream.Write(_logEntries.Dequeue(), 0, logmessagebytes.Length);
+                        _logFileStream.Write(logmessagebytes, 0, logmessagebytes.Length);
+                        _logFileStream.Flush();
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine(ex.ToString());
+                        _logEntries.Enqueue(logmessagebytes);
+                    }
+                }
+            });
+
+            RaiseLogDebugAdded(null, new LogEntry(message, entryType, timestamp));
+        }
+
+        public static void LogDebug(string message)
+        {
+            if (_includeDebugInformation)
+                WriteLogEntry(message, LogEntryType.Info);
+        }
+        public static void LogDebugBool(string message, bool value, string trueString, string falseString)
+        {
+            if (_includeDebugInformation)
+                WriteLogEntry(message.Replace("%1", value ? trueString : falseString), LogEntryType.Info);
+        }
         public static void LogWarning(string message) => WriteLogEntry(message, LogEntryType.Warning);
         public static void LogGenericError(string message) => WriteLogEntry(message, LogEntryType.GenericError);
         public static void LogCriticalError(string message) => WriteLogEntry(message, LogEntryType.CriticalError);
         public static void LogGenericError(Exception exception) => WriteLogEntry(exception.Message, LogEntryType.GenericError);
         public static void LogCriticalError(Exception exception) => WriteLogEntry(exception.Message, LogEntryType.CriticalError);
-        private static void WriteLogEntry(string message, LogEntryType entryType)
-        {
-            DateTime timestamp = DateTime.Now;
-
-            CreateLogFile();
-
-            Task.Run(() =>
-            {
-                string logmessage = CreateMessageString(message, entryType, timestamp);
-                byte[] logmessagebytes = Encoding.UTF8.GetBytes(logmessage);
-                try
-                {
-                    while (_logEntries.Count > 0)
-                        _logFileStream.Write(_logEntries.Dequeue(), 0, logmessagebytes.Length);
-                    _logFileStream.Write(logmessagebytes, 0, logmessagebytes.Length);
-                    _logFileStream.Flush();
-                }
-                catch (Exception ex)
-                {
-                    _logEntries.Enqueue(logmessagebytes);
-                }
-            });
-        }
 
         public static string[] GetAllLines() => File.ReadAllLines(ExceptionLogFilePath);
-        public static void CatchException(object sender, FirstChanceExceptionEventArgs args)
-        {
-            LogCriticalError(message: $"Error in '{args.Exception.TargetSite?.Name}': {args.Exception.Message}");
-            RaiseExceptionCatchedEvent(new object(), args.Exception);
-        }
 
-        private class LogEntry
+        public class LogEntry
         {
             public DateTime TimeStamp { get; }
-            public string TimeStampText => TimeStamp.ToShortDateString() + " " + TimeStamp.ToLongTimeString();
+            public string TimeStampText => TimeStamp.ToString("yyyy-MM-dd hh:mm:ss.fff");
             public string Message { get; }
             public LogEntryType EntryType { get; }
             public string EntryTypeText => Enum.GetName(typeof(LogEntryType), EntryType);
@@ -273,34 +294,29 @@ namespace WPFExceptionHandler
             {
                 return 460171812 + EqualityComparer<string>.Default.GetHashCode(Message);
             }
-        }
 
-        public class ExceptionCatchedEventArgs
-        {
-            public Exception CatchedException { get; }
-            public ExceptionCatchedEventArgs(Exception catchedException) => CatchedException = catchedException;
-
-            public override bool Equals(object obj)
+            public override string ToString()
             {
-                return obj is ExceptionCatchedEventArgs args &&
-                       EqualityComparer<Exception>.Default.Equals(CatchedException, args.CatchedException);
-            }
-
-            public override int GetHashCode()
-            {
-                return -1688175730 + EqualityComparer<Exception>.Default.GetHashCode(CatchedException);
+                return CreateMessageString(Message, EntryType, TimeStamp);
             }
         }
 
-        private class LogDebugAddEventArgs
+        public class LogDebugAddedEventArgs
         {
             public LogEntry Entry { get; }
-            public LogDebugAddEventArgs(LogEntry entry) => Entry = entry;
+
+            public LogDebugAddedEventArgs(LogEntry entry)
+            {
+                Entry = entry;
+            }
 
             public override bool Equals(object obj)
             {
-                return obj is LogDebugAddEventArgs args &&
-                       EqualityComparer<LogEntry>.Default.Equals(Entry, args.Entry);
+                if (!(obj is LogDebugAddedEventArgs))
+                    return false;
+
+                LogDebugAddedEventArgs args = (LogDebugAddedEventArgs) obj;
+                return Entry == args.Entry;
             }
 
             public override int GetHashCode()

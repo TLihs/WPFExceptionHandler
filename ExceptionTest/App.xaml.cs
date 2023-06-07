@@ -17,13 +17,17 @@ namespace ExceptionTest
     {
         App()
         {
-            CreateExceptionManagement(this, AppDomain.CurrentDomain);
+            CreateExceptionManagement(this, AppDomain.CurrentDomain, false);
+            LogDebugAdded += new LogDebugAddedEventHandler((s, e) =>
+            {
+                Console.WriteLine("Event received!");
+            });
         }
 
         protected override void OnStartup(StartupEventArgs e)
         {
-            LogDebug("Test");
-            //throw new Exception("TestException");
+            LogDebug("Debug Test");
+            LogWarning("Warning Test");
         }
     }
 }
