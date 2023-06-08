@@ -5,8 +5,14 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:ExceptionTest"
         mc:Ignorable="d"
-        Title="MainWindow" Height="450" Width="800">
+        Title="MainWindow" Height="450" Width="800"
+        x:Name="Window_MainWindow">
     <Grid>
-        
+        <TextBlock x:Name="TextBlock_ExceptionOutputTest"
+                   Background="#101010" Foreground="#EEEEEE"
+                   Text="{Binding ElementName=Window_MainWindow, Path=StringifiedTestMessages, BindsDirectlyToSource=True, UpdateSourceTrigger=PropertyChanged}"/>
+        <Button x:Name="Button_ThrowException" Width="100" Height="50" Click="Button_ThrowException_Click" Content="Throw Exception"/>
+
+
     </Grid>
 </Window>

@@ -1,11 +1,8 @@
+using Microsoft.VisualStudio;
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.IO;
-using System.Linq;
-using System.Runtime.ExceptionServices;
 using System.Text;
-using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
@@ -34,9 +31,13 @@ namespace WPFExceptionHandler
         private static string _exceptionLogPathAlt;
         private static string _exceptionLogPath;
         private static bool _initialized = false;
+        private static bool _shutdownStarted = false;
+        private static bool _disposed = false;
         private static bool _includeDebugInformation = true;
         private static FileStream _logFileStream;
         private static Queue<byte[]> _logEntries = new Queue<byte[]>();
+        private static Queue<Task> _pendingLogTasks = new Queue<Task>();
+        private static Task _currentLogTask = null;
 
         public static string ExceptionLogFilePath => string.IsNullOrWhiteSpace(_exceptionLogPathAlt) ? Path.Combine(_exceptionLogPath, DateTime.Now.ToString("yyyy-MM-dd") + ".log") : _exceptionLogPathAlt;
         public static bool UseFileLogging { get; set; }
@@ -64,7 +65,6 @@ namespace WPFExceptionHandler
 
             _includeDebugInformation = includeDebugInformation;
             string appname = System.Reflection.Assembly.GetEntryAssembly().GetName().Name;
-            Debug.Print("BaseDirectory: " + appname);
 
             _exceptionLogPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), appname, "Log");
 
@@ -114,7 +114,7 @@ namespace WPFExceptionHandler
                 if (e != null)
                     try
                     {
-                        LogCriticalError((Exception)e.ExceptionObject);
+                        LogGenericError((Exception)e.ExceptionObject);
                         exceptioncatched = true;
                     }
                     catch (Exception ex)
@@ -129,17 +129,18 @@ namespace WPFExceptionHandler
                     LogCriticalError("App is terminating.");
             });
 
-            domain.FirstChanceException += new EventHandler<FirstChanceExceptionEventArgs>((s, e) =>
-            {
-                try
-                {
-                    LogCriticalError(e.Exception);
-                }
-                catch (Exception ex)
-                {
-                    LogCriticalError("Error occured while logging exception: " + ex.Message);
-                }
-            });
+            //domain.FirstChanceException += new EventHandler<FirstChanceExceptionEventArgs>((s, e) =>
+            //{
+            //    try
+            //    {
+            //        LogGenericError(e.Exception);
+            //        Console.WriteLine(e.Exception.Source.ToString());
+            //    }
+            //    catch (Exception ex)
+            //    {
+            //        LogCriticalError("Error occured while logging exception: " + ex.Message);
+            //    }
+            //});
 
             app.Exit += new ExitEventHandler((s, e) =>
             {
@@ -147,6 +148,8 @@ namespace WPFExceptionHandler
                     LogCriticalError("Application exited with fault (exit code = " + e.ApplicationExitCode + ").");
                 else
                     LogDebug("Application exited without any fault.");
+
+                Shutdown();
             });
 
             _initialized = true;
@@ -180,6 +183,13 @@ namespace WPFExceptionHandler
             return filePathValid;
         }
 
+        private static void Shutdown()
+        {
+            _shutdownStarted = true;
+            _logFileStream.Close();
+            _disposed = true;
+        }
+
         private static void CreateLogFile()
         {
             string logpath = ExceptionLogFilePath;
@@ -208,7 +218,7 @@ namespace WPFExceptionHandler
             }
         }
 
-        public static string CreateMessageString(string message, LogEntryType entryType, DateTime timeStamp)
+        private static string CreateMessageString(string message, LogEntryType entryType, DateTime timeStamp)
         {
             string threadname = Thread.CurrentThread.Name;
             string formattedtimestamp = timeStamp.ToString("yyyy-MM-dd hh:mm:ss.fff");
@@ -221,35 +231,68 @@ namespace WPFExceptionHandler
 
         private static void WriteLogEntry(string message, LogEntryType entryType)
         {
+            if (_disposed)
+                return;
+            
             DateTime timestamp = DateTime.Now;
 
             if (UseFileLogging)
                 CreateLogFile();
 
-            Task.Run(() =>
+            if (_currentLogTask != null)
             {
-                string logmessage = CreateMessageString(message, entryType, timestamp);
-                Console.Write(logmessage);
-                byte[] logmessagebytes = Encoding.UTF8.GetBytes(logmessage);
-                if (UseFileLogging)
+                _pendingLogTasks.Enqueue(WriteNextLogEntryAsync(message, entryType, timestamp));
+                _currentLogTask.GetAwaiter().OnCompleted(() =>
                 {
-                    try
+                    if (_pendingLogTasks.Count > 0)
+                        _currentLogTask = _pendingLogTasks.Dequeue();
+                    else
+                        _currentLogTask = null;
+                });
+            }
+            else
+                _currentLogTask = WriteNextLogEntryAsync(message, entryType, timestamp);
+
+            RaiseLogDebugAdded(null, new LogEntry(message, entryType, timestamp));
+        }
+
+        private static async Task WriteNextLogEntryAsync(string message, LogEntryType entryType, DateTime timestamp)
+        {
+            string logmessage = CreateMessageString(message, entryType, timestamp);
+            Console.Write(logmessage);
+            if (UseFileLogging)
+            {
+                byte[] logmessagebytes = Encoding.UTF8.GetBytes(logmessage); ;
+                try
+                {
+                    _logEntries.Enqueue(logmessagebytes);
+                    while (_logEntries.Count > 0)
                     {
-                        while (_logEntries.Count > 0)
-                            _logFileStream.Write(_logEntries.Dequeue(), 0, logmessagebytes.Length);
-                        _logFileStream.Write(logmessagebytes, 0, logmessagebytes.Length);
-                        _logFileStream.Flush();
+                        logmessagebytes = _logEntries.Dequeue();
+                        await _logFileStream.WriteAsync(logmessagebytes, 0, logmessagebytes.Length);
                     }
-                    catch (Exception ex)
+                    await _logFileStream.FlushAsync();
+
+                    if (_shutdownStarted)
+                    {
+                        _logFileStream.Close();
+                        _disposed = true;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    if (!(_disposed || _shutdownStarted))
                     {
                         Console.WriteLine(ex.ToString());
                         _logEntries.Enqueue(logmessagebytes);
                     }
                 }
-            });
+            }
 
-            RaiseLogDebugAdded(null, new LogEntry(message, entryType, timestamp));
+            _currentLogTask = null;
         }
+
+        public static string[] GetAllLines() => File.ReadAllLines(ExceptionLogFilePath);
 
         public static void LogDebug(string message)
         {
@@ -266,15 +309,56 @@ namespace WPFExceptionHandler
         public static void LogCriticalError(string message) => WriteLogEntry(message, LogEntryType.CriticalError);
         public static void LogGenericError(Exception exception) => WriteLogEntry(exception.Message, LogEntryType.GenericError);
         public static void LogCriticalError(Exception exception) => WriteLogEntry(exception.Message, LogEntryType.CriticalError);
+        public static int RunSafe(LogMessage message, Action action)
+        {
+            try
+            {
+                action.Invoke();
+                return VSConstants.S_OK;
+            }
+            catch (Exception ex)
+            {
+                if (message.IsEmptyMessage)
+                    message.Message = "<Untraced>";
+                WriteLogEntry(string.Format("{0}: {1}", message.Message, ex.Message), message.EntryType);
+                return ex.HResult;
+            }
+        }
+        public static int RunSafe(LogMessage message, Func<bool> action)
+        {
+            try
+            {
+                bool result = action.Invoke();
+                return result ? VSConstants.S_OK : VSConstants.S_FALSE;
+            }
+            catch (Exception ex)
+            {
+                if (message.IsEmptyMessage)
+                    message.Message = "<Untraced>";
+                WriteLogEntry(string.Format("{0}: {1}", message.Message, ex.Message), message.EntryType);
+                return ex.HResult;
+            }
+        }
 
-        public static string[] GetAllLines() => File.ReadAllLines(ExceptionLogFilePath);
+        public struct LogMessage
+        {
+            public string Message { get; set; }
+            public LogEntryType EntryType { get; }
+            public bool IsEmptyMessage => string.IsNullOrEmpty(Message);
+
+            public LogMessage(string message = "", LogEntryType entryType = LogEntryType.GenericError)
+            {
+                Message = message;
+                EntryType = entryType;
+            }
+        }
 
         public class LogEntry
         {
             public DateTime TimeStamp { get; }
             public string TimeStampText => TimeStamp.ToString("yyyy-MM-dd hh:mm:ss.fff");
-            public string Message { get; }
-            public LogEntryType EntryType { get; }
+            public string Message { get; protected set; }
+            public LogEntryType EntryType { get; protected set; }
             public string EntryTypeText => Enum.GetName(typeof(LogEntryType), EntryType);
 
             public LogEntry(string message, LogEntryType entryType, DateTime timeStamp)
