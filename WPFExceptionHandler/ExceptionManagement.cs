@@ -1,3 +1,7 @@
+// WPF Exception Handler Library
+// Copyright (c) 2023 Toni Lihs
+// Licensed under MIT License
+
 using Microsoft.VisualStudio;
 using System;
 using System.Collections.Generic;
@@ -11,38 +15,37 @@ using System.Windows.Threading;
 
 namespace WPFExceptionHandler
 {
-    ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     public static class ExceptionManagement
     {
-        ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
         /// <summary>
         /// Enumeration of types of log entries that are defined for exception handling and/or debug logging.
         /// </summary>
         public enum LogEntryType
         {
-            Info,
-            Warning,
-            GenericError,
-            CriticalError
+            LE_INFO,
+            LE_WARNING,
+            LE_ERROR_GENERIC,
+            LE_ERROR_CRITICAL
         }
 
-        ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-        ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-        ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+        /// <summary>
+        /// 
+        /// </summary>
         public delegate void LogDebugAddedEventHandler(object sender, LogDebugAddedEventArgs args);
 
-        ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+        /// <summary>
+        /// 
+        /// </summary>
         public static event LogDebugAddedEventHandler LogDebugAdded;
-        ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+        /// <summary>
+        /// 
+        /// </summary>
         private static void RaiseLogDebugAdded(object sender, LogEntry entry)
         {
             LogDebugAdded?.Invoke(sender, new LogDebugAddedEventArgs(entry));
         }
 
-        ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-        ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-        ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
         private static string _exceptionLogPathAlt;
         private static string _exceptionLogPath;
         private static bool _initialized = false;
@@ -54,12 +57,19 @@ namespace WPFExceptionHandler
         private static Queue<Task> _pendingLogTasks = new Queue<Task>();
         private static Task _currentLogTask = null;
 
-        ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+        /// <summary>
+        /// 
+        /// </summary>
         public static string ExceptionLogFilePath => string.IsNullOrWhiteSpace(_exceptionLogPathAlt) ? 
             Path.Combine(_exceptionLogPath, DateTime.Now.ToString("yyyy-MM-dd") + ".log") : _exceptionLogPathAlt;
+        /// <summary>
+        /// 
+        /// </summary>
         public static bool UseFileLogging { get; set; }
 
-        ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+        /// <summary>
+        /// 
+        /// </summary>
         static ExceptionManagement()
         {
             Application.Current.Exit += new ExitEventHandler((s, e) =>
@@ -73,7 +83,9 @@ namespace WPFExceptionHandler
             UseFileLogging = false;
         }
 
-        ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+        /// <summary>
+        /// 
+        /// </summary>
         public static void CreateExceptionManagement(Application app, AppDomain domain, bool includeDebugInformation = true)
         {
             if (_initialized)
@@ -174,7 +186,9 @@ namespace WPFExceptionHandler
             _initialized = true;
         }
 
-        ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+        /// <summary>
+        /// 
+        /// </summary>
         public static bool SetAlternativeLogFilePath(string filePath)
         {
             bool filePathValid = false;
@@ -203,7 +217,9 @@ namespace WPFExceptionHandler
             return filePathValid;
         }
 
-        ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+        /// <summary>
+        /// 
+        /// </summary>
         private static void Shutdown()
         {
             _shutdownStarted = true;
@@ -211,7 +227,9 @@ namespace WPFExceptionHandler
             _disposed = true;
         }
 
-        ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+        /// <summary>
+        /// 
+        /// </summary>
         private static void CreateLogFile()
         {
             string logpath = ExceptionLogFilePath;
@@ -240,7 +258,9 @@ namespace WPFExceptionHandler
             }
         }
 
-        ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+        /// <summary>
+        /// 
+        /// </summary>
         private static string CreateMessageString(string message, LogEntryType entryType, DateTime timeStamp)
         {
             string threadname = Thread.CurrentThread.Name;
@@ -252,7 +272,9 @@ namespace WPFExceptionHandler
                 return string.Format("{0}: [{1}] ({2}) {3}\r\n", formattedtimestamp, threadname, logentrytype, message);
         }
 
-        ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+        /// <summary>
+        /// 
+        /// </summary>
         private static void WriteLogEntry(string message, LogEntryType entryType)
         {
             if (_disposed)
@@ -280,7 +302,9 @@ namespace WPFExceptionHandler
             RaiseLogDebugAdded(null, new LogEntry(message, entryType, timestamp));
         }
 
-        ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+        /// <summary>
+        /// 
+        /// </summary>
         private static async Task WriteNextLogEntryAsync(string message, LogEntryType entryType, DateTime timestamp)
         {
             string logmessage = CreateMessageString(message, entryType, timestamp);
@@ -317,39 +341,57 @@ namespace WPFExceptionHandler
             _currentLogTask = null;
         }
 
-        ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+        /// <summary>
+        /// 
+        /// </summary>
         public static string[] GetAllLines() => File.ReadAllLines(ExceptionLogFilePath);
 
-        ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+        /// <summary>
+        /// 
+        /// </summary>
         public static void LogDebug(string message)
         {
             if (_includeDebugInformation)
-                WriteLogEntry(message, LogEntryType.Info);
+                WriteLogEntry(message, LogEntryType.LE_INFO);
         }
 
-        ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+        /// <summary>
+        /// 
+        /// </summary>
         public static void LogDebugBool(string message, bool value, string trueString, string falseString)
         {
             if (_includeDebugInformation)
-                WriteLogEntry(message.Replace("%1", value ? trueString : falseString), LogEntryType.Info);
+                WriteLogEntry(message.Replace("%1", value ? trueString : falseString), LogEntryType.LE_INFO);
         }
 
-        ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-        public static void LogWarning(string message) => WriteLogEntry(message, LogEntryType.Warning);
+        /// <summary>
+        /// 
+        /// </summary>
+        public static void LogWarning(string message) => WriteLogEntry(message, LogEntryType.LE_WARNING);
 
-        ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-        public static void LogGenericError(string message) => WriteLogEntry(message, LogEntryType.GenericError);
+        /// <summary>
+        /// 
+        /// </summary>
+        public static void LogGenericError(string message) => WriteLogEntry(message, LogEntryType.LE_ERROR_GENERIC);
 
-        ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-        public static void LogCriticalError(string message) => WriteLogEntry(message, LogEntryType.CriticalError);
+        /// <summary>
+        /// 
+        /// </summary>
+        public static void LogCriticalError(string message) => WriteLogEntry(message, LogEntryType.LE_ERROR_CRITICAL);
 
-        ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-        public static void LogGenericError(Exception exception) => WriteLogEntry(exception.Message, LogEntryType.GenericError);
+        /// <summary>
+        /// 
+        /// </summary>
+        public static void LogGenericError(Exception exception) => WriteLogEntry(exception.Message, LogEntryType.LE_ERROR_GENERIC);
 
-        ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-        public static void LogCriticalError(Exception exception) => WriteLogEntry(exception.Message, LogEntryType.CriticalError);
+        /// <summary>
+        /// 
+        /// </summary>
+        public static void LogCriticalError(Exception exception) => WriteLogEntry(exception.Message, LogEntryType.LE_ERROR_CRITICAL);
 
-        ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+        /// <summary>
+        /// 
+        /// </summary>
         public static int RunSafe(LogMessage message, Action action)
         {
             try
@@ -366,7 +408,9 @@ namespace WPFExceptionHandler
             }
         }
 
-        ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+        /// <summary>
+        /// 
+        /// </summary>
         public static int RunSafe(LogMessage message, Func<bool> action)
         {
             try
@@ -383,41 +427,71 @@ namespace WPFExceptionHandler
             }
         }
 
-        ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+        /// <summary>
+        /// 
+        /// </summary>
         public static string GetHRToMessage(int hr)
         {
             return Marshal.GetExceptionForHR(hr).Message;
         }
 
-        ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-        ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-        ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+        /// <summary>
+        /// 
+        /// </summary>
         public struct LogMessage
         {
+            /// <summary>
+            /// 
+            /// </summary>
             public string Message { get; set; }
+            /// <summary>
+            /// 
+            /// </summary>
             public LogEntryType EntryType { get; }
+            /// <summary>
+            /// 
+            /// </summary>
             public bool IsEmptyMessage => string.IsNullOrEmpty(Message);
 
-            ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-            public LogMessage(string message = "", LogEntryType entryType = LogEntryType.GenericError)
+            /// <summary>
+            /// 
+            /// </summary>
+            public LogMessage(string message = "", LogEntryType entryType = LogEntryType.LE_ERROR_GENERIC)
             {
                 Message = message;
                 EntryType = entryType;
             }
         }
 
-        ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-        ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-        ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+        /// <summary>
+        /// 
+        /// </summary>
         public class LogEntry
         {
+            /// <summary>
+            /// 
+            /// </summary>
             public DateTime TimeStamp { get; }
+            /// <summary>
+            /// 
+            /// </summary>
             public string TimeStampText => TimeStamp.ToString("yyyy-MM-dd hh:mm:ss.fff");
+            /// <summary>
+            /// 
+            /// </summary>
             public string Message { get; protected set; }
+            /// <summary>
+            /// 
+            /// </summary>
             public LogEntryType EntryType { get; protected set; }
+            /// <summary>
+            /// 
+            /// </summary>
             public string EntryTypeText => Enum.GetName(typeof(LogEntryType), EntryType);
 
-            ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+            /// <summary>
+            /// 
+            /// </summary>
             public LogEntry(string message, LogEntryType entryType, DateTime timeStamp)
             {
                 Message = message;
@@ -425,40 +499,53 @@ namespace WPFExceptionHandler
                 TimeStamp = timeStamp;
             }
 
-            ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+            /// <summary>
+            /// 
+            /// </summary>
             public override bool Equals(object obj)
             {
                 return obj is LogEntry entry &&
                        Message == entry.Message;
             }
 
-            ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+            /// <summary>
+            /// 
+            /// </summary>
             public override int GetHashCode()
             {
                 return 460171812 + EqualityComparer<string>.Default.GetHashCode(Message);
             }
 
-            ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+            /// <summary>
+            /// 
+            /// </summary>
             public override string ToString()
             {
                 return CreateMessageString(Message, EntryType, TimeStamp);
             }
         }
 
-        ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-        ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-        ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+        /// <summary>
+        /// 
+        /// </summary>
         public class LogDebugAddedEventArgs
         {
+            /// <summary>
+            /// 
+            /// </summary>
             public LogEntry Entry { get; }
 
-            ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+            /// <summary>
+            /// 
+            /// </summary>
             public LogDebugAddedEventArgs(LogEntry entry)
             {
                 Entry = entry;
             }
 
-            ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+            /// <summary>
+            /// 
+            /// </summary>
             public override bool Equals(object obj)
             {
                 if (!(obj is LogDebugAddedEventArgs))
@@ -468,7 +555,9 @@ namespace WPFExceptionHandler
                 return Entry == args.Entry;
             }
 
-            ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+            /// <summary>
+            /// 
+            /// </summary>
             public override int GetHashCode()
             {
                 return 1970138155 + EqualityComparer<LogEntry>.Default.GetHashCode(Entry);
