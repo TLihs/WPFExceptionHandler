@@ -6,6 +6,7 @@ using Microsoft.VisualStudio;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Runtime.ExceptionServices;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
@@ -60,12 +61,12 @@ namespace WPFExceptionHandler
         /// <summary>
         /// 
         /// </summary>
-        public static string ExceptionLogFilePath => string.IsNullOrWhiteSpace(_exceptionLogPathAlt) ? 
+        public static string EHExceptionLogFilePath => string.IsNullOrWhiteSpace(_exceptionLogPathAlt) ? 
             Path.Combine(_exceptionLogPath, DateTime.Now.ToString("yyyy-MM-dd") + ".log") : _exceptionLogPathAlt;
         /// <summary>
         /// 
         /// </summary>
-        public static bool UseFileLogging { get; set; }
+        public static bool EHUseFileLogging { get; set; }
 
         /// <summary>
         /// 
@@ -75,25 +76,24 @@ namespace WPFExceptionHandler
             Application.Current.Exit += new ExitEventHandler((s, e) =>
             {
                 if (e.ApplicationExitCode != 0)
-                    LogCriticalError("ExceptionManagement exited with fault (exit code = " + e.ApplicationExitCode + ").");
+                    EHLogCriticalError("ExceptionManagement exited with fault (exit code = " + e.ApplicationExitCode + ").");
                 else
-                    LogDebug("ExceptionManagement exited without any fault.");
+                    EHLogDebug("ExceptionManagement exited without any fault.");
             });
-
-            UseFileLogging = false;
         }
 
         /// <summary>
         /// 
         /// </summary>
-        public static void CreateExceptionManagement(Application app, AppDomain domain, bool includeDebugInformation = true)
+        public static void CreateExceptionManagement(Application app, AppDomain domain, bool includeDebugInformation = true, bool useFileLogging = false)
         {
             if (_initialized)
             {
-                LogWarning("ExceptionManagement::CreateExceptionManagement(...) - ExceptionManagement already initialized.");
+                EHLogWarning("ExceptionManagement::CreateExceptionManagement(...) - ExceptionManagement already initialized.");
                 return;
             }
 
+            EHUseFileLogging = useFileLogging;
             _includeDebugInformation = includeDebugInformation;
             string appname = System.Reflection.Assembly.GetEntryAssembly().GetName().Name;
 
@@ -103,12 +103,12 @@ namespace WPFExceptionHandler
             {
                 try
                 {
-                    LogGenericError(e.Exception);
+                    EHLogGenericError(e.Exception);
                     e.SetObserved();
                 }
                 catch (Exception ex)
                 {
-                    LogCriticalError("Error occured while logging exception: " + ex.Message);
+                    EHLogCriticalError("Error occured while logging exception: " + ex.Message);
                 }
             });
 
@@ -116,12 +116,12 @@ namespace WPFExceptionHandler
             {
                 try
                 {
-                    LogGenericError(e.Exception);
+                    EHLogGenericError(e.Exception);
                     e.Handled = true;
                 }
                 catch (Exception ex)
                 {
-                    LogCriticalError("Error occured while logging exception: " + ex.Message);
+                    EHLogCriticalError("Error occured while logging exception: " + ex.Message);
                 }
             });
 
@@ -129,12 +129,12 @@ namespace WPFExceptionHandler
             {
                 try
                 {
-                    LogGenericError(e.Exception);
+                    EHLogGenericError(e.Exception);
                     e.Handled = true;
                 }
                 catch (Exception ex)
                 {
-                    LogCriticalError("Error occured while logging exception: " + ex.Message);
+                    EHLogCriticalError("Error occured while logging exception: " + ex.Message);
                 }
             });
 
@@ -145,40 +145,40 @@ namespace WPFExceptionHandler
                 if (e != null)
                     try
                     {
-                        LogGenericError((Exception)e.ExceptionObject);
+                        EHLogGenericError((Exception)e.ExceptionObject);
                         exceptioncatched = true;
                     }
                     catch (Exception ex)
                     {
-                        LogCriticalError("Error occured while logging exception: " + ex.Message);
+                        EHLogCriticalError("Error occured while logging exception: " + ex.Message);
                     }
                 
                 if (!exceptioncatched)
-                    LogCriticalError("Unknown critical exception occured.");
+                    EHLogCriticalError("Unknown critical exception occured.");
 
                 if (e.IsTerminating)
-                    LogCriticalError("App is terminating.");
+                    EHLogCriticalError("App is terminating.");
             });
 
-            //domain.FirstChanceException += new EventHandler<FirstChanceExceptionEventArgs>((s, e) =>
-            //{
-            //    try
-            //    {
-            //        LogGenericError(e.Exception);
-            //        Console.WriteLine(e.Exception.Source.ToString());
-            //    }
-            //    catch (Exception ex)
-            //    {
-            //        LogCriticalError("Error occured while logging exception: " + ex.Message);
-            //    }
-            //});
+            domain.FirstChanceException += new EventHandler<FirstChanceExceptionEventArgs>((s, e) =>
+            {
+                try
+                {
+                    EHLogGenericError(e.Exception);
+                    Console.WriteLine(e.Exception.Source.ToString());
+                }
+                catch (Exception ex)
+                {
+                    EHLogCriticalError("Error occured while logging exception: " + ex.Message);
+                }
+            });
 
             app.Exit += new ExitEventHandler((s, e) =>
             {
                 if (e.ApplicationExitCode != 0)
-                    LogCriticalError("Application exited with fault (exit code = " + e.ApplicationExitCode + ").");
+                    EHLogCriticalError("Application exited with fault (exit code = " + e.ApplicationExitCode + ").");
                 else
-                    LogDebug("Application exited without any fault.");
+                    EHLogDebug("Application exited without any fault.");
 
                 Shutdown();
             });
@@ -205,13 +205,13 @@ namespace WPFExceptionHandler
                 if (filePathValid)
                     _exceptionLogPathAlt = filePath;
                 else
-                    LogGenericError(string.Format("Alternative file path invalid ('{0}').", filePath));
+                    EHLogGenericError(string.Format("Alternative file path invalid ('{0}').", filePath));
             }
             catch (Exception exception)
             {
                 filePathValid = false;
-                LogGenericError(exception.Message);
-                LogGenericError(string.Format("Alternative file path could not be set ('{0}').", filePath));
+                EHLogGenericError(exception.Message);
+                EHLogGenericError(string.Format("Alternative file path could not be set ('{0}').", filePath));
             }
 
             return filePathValid;
@@ -223,7 +223,8 @@ namespace WPFExceptionHandler
         private static void Shutdown()
         {
             _shutdownStarted = true;
-            _logFileStream.Close();
+            if (EHUseFileLogging)
+                _logFileStream.Close();
             _disposed = true;
         }
 
@@ -232,7 +233,7 @@ namespace WPFExceptionHandler
         /// </summary>
         private static void CreateLogFile()
         {
-            string logpath = ExceptionLogFilePath;
+            string logpath = EHExceptionLogFilePath;
             bool newlog = false;
 
             FileInfo logfileinfo = new FileInfo(logpath);
@@ -248,12 +249,12 @@ namespace WPFExceptionHandler
 
                 if (newlog)
                 {
-                    LogDebug("Log created.");
+                    EHLogDebug("Log created.");
                 }
                 else
                 {
                     _logFileStream.Position = _logFileStream.Length;
-                    LogDebug("Log reopened.");
+                    EHLogDebug("Log reopened.");
                 }
             }
         }
@@ -282,7 +283,7 @@ namespace WPFExceptionHandler
             
             DateTime timestamp = DateTime.Now;
 
-            if (UseFileLogging)
+            if (EHUseFileLogging)
                 CreateLogFile();
 
             if (_currentLogTask != null)
@@ -309,7 +310,7 @@ namespace WPFExceptionHandler
         {
             string logmessage = CreateMessageString(message, entryType, timestamp);
             Console.Write(logmessage);
-            if (UseFileLogging)
+            if (EHUseFileLogging)
             {
                 byte[] logmessagebytes = Encoding.UTF8.GetBytes(logmessage); ;
                 try
@@ -337,19 +338,37 @@ namespace WPFExceptionHandler
                     }
                 }
             }
-
-            _currentLogTask = null;
         }
 
         /// <summary>
         /// 
         /// </summary>
-        public static string[] GetAllLines() => File.ReadAllLines(ExceptionLogFilePath);
+        private static string FormatException(Exception ex)
+        {
+            string formattedexception;
+
+            try
+            {
+                formattedexception = string.Format("{0}: {1} ({2})", ex.Message, ex.StackTrace, ex.Source);
+            }
+            catch (Exception e)
+            {
+                EHLogGenericError(e);
+                formattedexception = ex.Message;
+            }
+            
+            return formattedexception;
+        }
 
         /// <summary>
         /// 
         /// </summary>
-        public static void LogDebug(string message)
+        public static string[] GetAllLines() => File.ReadAllLines(EHExceptionLogFilePath);
+
+        /// <summary>
+        /// 
+        /// </summary>
+        public static void EHLogDebug(string message)
         {
             if (_includeDebugInformation)
                 WriteLogEntry(message, LogEntryType.LE_INFO);
@@ -358,7 +377,7 @@ namespace WPFExceptionHandler
         /// <summary>
         /// 
         /// </summary>
-        public static void LogDebugBool(string message, bool value, string trueString, string falseString)
+        public static void EHLogDebugBool(string message, bool value, string trueString, string falseString)
         {
             if (_includeDebugInformation)
                 WriteLogEntry(message.Replace("%1", value ? trueString : falseString), LogEntryType.LE_INFO);
@@ -367,27 +386,27 @@ namespace WPFExceptionHandler
         /// <summary>
         /// 
         /// </summary>
-        public static void LogWarning(string message) => WriteLogEntry(message, LogEntryType.LE_WARNING);
+        public static void EHLogWarning(string message) => WriteLogEntry(message, LogEntryType.LE_WARNING);
 
         /// <summary>
         /// 
         /// </summary>
-        public static void LogGenericError(string message) => WriteLogEntry(message, LogEntryType.LE_ERROR_GENERIC);
+        public static void EHLogGenericError(string message) => WriteLogEntry(message, LogEntryType.LE_ERROR_GENERIC);
 
         /// <summary>
         /// 
         /// </summary>
-        public static void LogCriticalError(string message) => WriteLogEntry(message, LogEntryType.LE_ERROR_CRITICAL);
+        public static void EHLogCriticalError(string message) => WriteLogEntry(message, LogEntryType.LE_ERROR_CRITICAL);
 
         /// <summary>
         /// 
         /// </summary>
-        public static void LogGenericError(Exception exception) => WriteLogEntry(exception.Message, LogEntryType.LE_ERROR_GENERIC);
+        public static void EHLogGenericError(Exception exception) => WriteLogEntry(FormatException(exception), LogEntryType.LE_ERROR_GENERIC);
 
         /// <summary>
         /// 
         /// </summary>
-        public static void LogCriticalError(Exception exception) => WriteLogEntry(exception.Message, LogEntryType.LE_ERROR_CRITICAL);
+        public static void EHLogCriticalError(Exception exception) => WriteLogEntry(FormatException(exception), LogEntryType.LE_ERROR_CRITICAL);
 
         /// <summary>
         /// 
