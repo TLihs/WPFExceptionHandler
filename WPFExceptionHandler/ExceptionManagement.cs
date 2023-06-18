@@ -368,10 +368,15 @@ namespace WPFExceptionHandler
         /// <summary>
         /// 
         /// </summary>
-        public static void EHLogDebug(string message)
+        public static void EHLogDebug(string message, params string[] formatParameters)
         {
             if (_includeDebugInformation)
-                WriteLogEntry(message, LogEntryType.LE_INFO);
+            {
+                if (formatParameters != null & formatParameters.Length > 0)
+                    WriteLogEntry(string.Format(message, formatParameters), LogEntryType.LE_INFO);
+                else
+                    WriteLogEntry(message, LogEntryType.LE_INFO);
+            }
         }
 
         /// <summary>
@@ -386,17 +391,35 @@ namespace WPFExceptionHandler
         /// <summary>
         /// 
         /// </summary>
-        public static void EHLogWarning(string message) => WriteLogEntry(message, LogEntryType.LE_WARNING);
+        public static void EHLogWarning(string message, params string[] formatParameters)
+        {
+            if (formatParameters != null & formatParameters.Length > 0)
+                WriteLogEntry(string.Format(message, formatParameters), LogEntryType.LE_WARNING);
+            else
+                WriteLogEntry(message, LogEntryType.LE_WARNING);
+        }
 
         /// <summary>
         /// 
         /// </summary>
-        public static void EHLogGenericError(string message) => WriteLogEntry(message, LogEntryType.LE_ERROR_GENERIC);
+        public static void EHLogGenericError(string message, params string[] formatParameters)
+        {
+            if (formatParameters != null & formatParameters.Length > 0)
+                WriteLogEntry(string.Format(message, formatParameters), LogEntryType.LE_ERROR_GENERIC);
+            else
+                WriteLogEntry(message, LogEntryType.LE_ERROR_GENERIC);
+        }
 
         /// <summary>
         /// 
         /// </summary>
-        public static void EHLogCriticalError(string message) => WriteLogEntry(message, LogEntryType.LE_ERROR_CRITICAL);
+        public static void EHLogCriticalError(string message, params string[] formatParameters)
+        {
+            if (formatParameters != null & formatParameters.Length > 0)
+                WriteLogEntry(string.Format(message, formatParameters), LogEntryType.LE_ERROR_CRITICAL);
+            else
+                WriteLogEntry(message, LogEntryType.LE_ERROR_CRITICAL);
+        }
 
         /// <summary>
         /// 
@@ -411,7 +434,7 @@ namespace WPFExceptionHandler
         /// <summary>
         /// 
         /// </summary>
-        public static int RunSafe(LogMessage message, Action action)
+        public static int RunSafe(Action action, LogMessage exceptionMessage)
         {
             try
             {
@@ -420,9 +443,9 @@ namespace WPFExceptionHandler
             }
             catch (Exception ex)
             {
-                if (message.IsEmptyMessage)
-                    message.Message = "<Untraced>";
-                WriteLogEntry(string.Format("{0}: {1}", message.Message, ex.Message), message.EntryType);
+                if (exceptionMessage.IsEmptyMessage)
+                    exceptionMessage.Message = "<Untraced>";
+                WriteLogEntry(string.Format("{0}: {1}", exceptionMessage.Message, ex.Message), exceptionMessage.EntryType);
                 return ex.HResult;
             }
         }
@@ -430,7 +453,7 @@ namespace WPFExceptionHandler
         /// <summary>
         /// 
         /// </summary>
-        public static int RunSafe(LogMessage message, Func<bool> action)
+        public static int RunSafe(Func<bool> action, LogMessage exceptionMessage)
         {
             try
             {
@@ -439,9 +462,9 @@ namespace WPFExceptionHandler
             }
             catch (Exception ex)
             {
-                if (message.IsEmptyMessage)
-                    message.Message = "<Untraced>";
-                WriteLogEntry(string.Format("{0}: {1}", message.Message, ex.Message), message.EntryType);
+                if (exceptionMessage.IsEmptyMessage)
+                    exceptionMessage.Message = "<Untraced>";
+                WriteLogEntry(string.Format("{0}: {1}", exceptionMessage.Message, ex.Message), exceptionMessage.EntryType);
                 return ex.HResult;
             }
         }
