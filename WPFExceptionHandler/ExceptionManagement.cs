@@ -32,6 +32,8 @@ namespace WPFExceptionHandler
         /// <summary>
         /// 
         /// </summary>
+        /// <param name="sender"></param>
+        /// <param name="args"></param>
         public delegate void LogDebugAddedEventHandler(object sender, LogDebugAddedEventArgs args);
 
         /// <summary>
@@ -42,6 +44,8 @@ namespace WPFExceptionHandler
         /// <summary>
         /// 
         /// </summary>
+        /// <param name="sender"></param>
+        /// <param name="entry"></param>
         private static void RaiseLogDebugAdded(object sender, LogEntry entry)
         {
             LogDebugAdded?.Invoke(sender, new LogDebugAddedEventArgs(entry));
@@ -85,6 +89,10 @@ namespace WPFExceptionHandler
         /// <summary>
         /// 
         /// </summary>
+        /// <param name="app"></param>
+        /// <param name="domain"></param>
+        /// <param name="includeDebugInformation"></param>
+        /// <param name="useFileLogging"></param>
         public static void CreateExceptionManagement(Application app, AppDomain domain, bool includeDebugInformation = true, bool useFileLogging = false)
         {
             if (_initialized)
@@ -189,6 +197,8 @@ namespace WPFExceptionHandler
         /// <summary>
         /// 
         /// </summary>
+        /// <param name="filePath"></param>
+        /// <returns></returns>
         public static bool SetAlternativeLogFilePath(string filePath)
         {
             bool filePathValid = false;
@@ -262,6 +272,10 @@ namespace WPFExceptionHandler
         /// <summary>
         /// 
         /// </summary>
+        /// <param name="message"></param>
+        /// <param name="entryType"></param>
+        /// <param name="timeStamp"></param>
+        /// <returns></returns>
         private static string CreateMessageString(string message, LogEntryType entryType, DateTime timeStamp)
         {
             string threadname = Thread.CurrentThread.Name;
@@ -276,6 +290,8 @@ namespace WPFExceptionHandler
         /// <summary>
         /// 
         /// </summary>
+        /// <param name="message"></param>
+        /// <param name="entryType"></param>
         private static void WriteLogEntry(string message, LogEntryType entryType)
         {
             if (_disposed)
@@ -306,6 +322,10 @@ namespace WPFExceptionHandler
         /// <summary>
         /// 
         /// </summary>
+        /// <param name="message"></param>
+        /// <param name="entryType"></param>
+        /// <param name="timestamp"></param>
+        /// <returns></returns>
         private static async Task WriteNextLogEntryAsync(string message, LogEntryType entryType, DateTime timestamp)
         {
             string logmessage = CreateMessageString(message, entryType, timestamp);
@@ -343,6 +363,8 @@ namespace WPFExceptionHandler
         /// <summary>
         /// 
         /// </summary>
+        /// <param name="ex"></param>
+        /// <returns></returns>
         private static string FormatException(Exception ex)
         {
             string formattedexception;
@@ -363,11 +385,14 @@ namespace WPFExceptionHandler
         /// <summary>
         /// 
         /// </summary>
+        /// <returns></returns>
         public static string[] GetAllLines() => File.ReadAllLines(EHExceptionLogFilePath);
 
         /// <summary>
         /// 
         /// </summary>
+        /// <param name="message"></param>
+        /// <param name="formatParameters"></param>
         public static void EHLogDebug(string message, params string[] formatParameters)
         {
             if (_includeDebugInformation)
@@ -382,6 +407,10 @@ namespace WPFExceptionHandler
         /// <summary>
         /// 
         /// </summary>
+        /// <param name="message"></param>
+        /// <param name="value"></param>
+        /// <param name="trueString"></param>
+        /// <param name="falseString"></param>
         public static void EHLogDebugBool(string message, bool value, string trueString, string falseString)
         {
             if (_includeDebugInformation)
@@ -391,6 +420,8 @@ namespace WPFExceptionHandler
         /// <summary>
         /// 
         /// </summary>
+        /// <param name="message"></param>
+        /// <param name="formatParameters"></param>
         public static void EHLogWarning(string message, params string[] formatParameters)
         {
             if (formatParameters != null & formatParameters.Length > 0)
@@ -402,6 +433,14 @@ namespace WPFExceptionHandler
         /// <summary>
         /// 
         /// </summary>
+        /// <param name="exception"></param>
+        public static void EHLogGenericError(Exception exception) => WriteLogEntry(FormatException(exception), LogEntryType.LE_ERROR_GENERIC);
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="message"></param>
+        /// <param name="formatParameters"></param>
         public static void EHLogGenericError(string message, params string[] formatParameters)
         {
             if (formatParameters != null & formatParameters.Length > 0)
@@ -413,6 +452,14 @@ namespace WPFExceptionHandler
         /// <summary>
         /// 
         /// </summary>
+        /// <param name="exception"></param>
+        public static void EHLogCriticalError(Exception exception) => WriteLogEntry(FormatException(exception), LogEntryType.LE_ERROR_CRITICAL);
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="message"></param>
+        /// <param name="formatParameters"></param>
         public static void EHLogCriticalError(string message, params string[] formatParameters)
         {
             if (formatParameters != null & formatParameters.Length > 0)
@@ -424,16 +471,69 @@ namespace WPFExceptionHandler
         /// <summary>
         /// 
         /// </summary>
-        public static void EHLogGenericError(Exception exception) => WriteLogEntry(FormatException(exception), LogEntryType.LE_ERROR_GENERIC);
+        /// <param name="type"></param>
+        /// <param name="message"></param>
+        /// <param name="owner"></param>
+        /// <param name="formatParameters"></param>
+        public static void EHMsgBox(LogEntryType type, string message, Window owner = null, params string[] formatParameters)
+        {
+            string formattedmessage;
+            
+            if (formatParameters != null & formatParameters.Length > 0)
+                formattedmessage = string.Format(message, formatParameters);
+            else
+                formattedmessage = message;
+
+            WriteLogEntry(formattedmessage, type);
+            string title = "Info";
+            MessageBoxImage severityimage = MessageBoxImage.Information;
+            switch (type)
+            {
+                case LogEntryType.LE_WARNING:
+                    title = "Warning";
+                    severityimage = MessageBoxImage.Warning;
+                    break;
+                case LogEntryType.LE_ERROR_GENERIC | LogEntryType.LE_ERROR_CRITICAL:
+                    title = "Error";
+                    severityimage = MessageBoxImage.Error;
+                    break;
+            }
+
+            if (owner != null)
+                MessageBox.Show(owner, formattedmessage, title, MessageBoxButton.OK, severityimage);
+            else
+                MessageBox.Show(formattedmessage, title, MessageBoxButton.OK, severityimage);
+        }
 
         /// <summary>
         /// 
         /// </summary>
-        public static void EHLogCriticalError(Exception exception) => WriteLogEntry(FormatException(exception), LogEntryType.LE_ERROR_CRITICAL);
+        /// <param name="message"></param>
+        /// <param name="owner"></param>
+        /// <param name="formatParameters"></param>
+        /// <returns></returns>
+        public static MessageBoxResult EHMsgBoxYesNo(string message, Window owner = null, params string[] formatParameters)
+        {
+            string formattedmessage;
+
+            if (formatParameters != null & formatParameters.Length > 0)
+                formattedmessage = string.Format(message, formatParameters);
+            else
+                formattedmessage = message;
+
+            WriteLogEntry(formattedmessage, LogEntryType.LE_INFO);
+            if (owner != null)
+                return MessageBox.Show(owner, formattedmessage, "Question", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.Yes, MessageBoxOptions.DefaultDesktopOnly);
+            else
+                return MessageBox.Show(formattedmessage, "Question", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.Yes, MessageBoxOptions.DefaultDesktopOnly);
+        }
 
         /// <summary>
         /// 
         /// </summary>
+        /// <param name="action"></param>
+        /// <param name="exceptionMessage"></param>
+        /// <returns></returns>
         public static int RunSafe(Action action, LogMessage exceptionMessage)
         {
             try
@@ -453,6 +553,9 @@ namespace WPFExceptionHandler
         /// <summary>
         /// 
         /// </summary>
+        /// <param name="action"></param>
+        /// <param name="exceptionMessage"></param>
+        /// <returns></returns>
         public static int RunSafe(Func<bool> action, LogMessage exceptionMessage)
         {
             try
@@ -472,6 +575,8 @@ namespace WPFExceptionHandler
         /// <summary>
         /// 
         /// </summary>
+        /// <param name="hr"></param>
+        /// <returns></returns>
         public static string GetHRToMessage(int hr)
         {
             return Marshal.GetExceptionForHR(hr).Message;
@@ -498,6 +603,8 @@ namespace WPFExceptionHandler
             /// <summary>
             /// 
             /// </summary>
+            /// <param name="message"></param>
+            /// <param name="entryType"></param>
             public LogMessage(string message = "", LogEntryType entryType = LogEntryType.LE_ERROR_GENERIC)
             {
                 Message = message;
@@ -534,6 +641,9 @@ namespace WPFExceptionHandler
             /// <summary>
             /// 
             /// </summary>
+            /// <param name="message"></param>
+            /// <param name="entryType"></param>
+            /// <param name="timeStamp"></param>
             public LogEntry(string message, LogEntryType entryType, DateTime timeStamp)
             {
                 Message = message;
@@ -544,6 +654,8 @@ namespace WPFExceptionHandler
             /// <summary>
             /// 
             /// </summary>
+            /// <param name="obj"></param>
+            /// <returns></returns>
             public override bool Equals(object obj)
             {
                 return obj is LogEntry entry &&
@@ -553,6 +665,7 @@ namespace WPFExceptionHandler
             /// <summary>
             /// 
             /// </summary>
+            /// <returns></returns>
             public override int GetHashCode()
             {
                 return 460171812 + EqualityComparer<string>.Default.GetHashCode(Message);
@@ -561,6 +674,7 @@ namespace WPFExceptionHandler
             /// <summary>
             /// 
             /// </summary>
+            /// <returns></returns>
             public override string ToString()
             {
                 return CreateMessageString(Message, EntryType, TimeStamp);
@@ -580,6 +694,7 @@ namespace WPFExceptionHandler
             /// <summary>
             /// 
             /// </summary>
+            /// <param name="entry"></param>
             public LogDebugAddedEventArgs(LogEntry entry)
             {
                 Entry = entry;
@@ -588,6 +703,8 @@ namespace WPFExceptionHandler
             /// <summary>
             /// 
             /// </summary>
+            /// <param name="obj"></param>
+            /// <returns></returns>
             public override bool Equals(object obj)
             {
                 if (!(obj is LogDebugAddedEventArgs))
@@ -600,6 +717,7 @@ namespace WPFExceptionHandler
             /// <summary>
             /// 
             /// </summary>
+            /// <returns></returns>
             public override int GetHashCode()
             {
                 return 1970138155 + EqualityComparer<LogEntry>.Default.GetHashCode(Entry);
