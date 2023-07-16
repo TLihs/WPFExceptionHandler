@@ -4,7 +4,9 @@
 
 using Microsoft.VisualStudio;
 using System;
+using System.Collections;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Runtime.ExceptionServices;
 using System.Runtime.InteropServices;
@@ -51,6 +53,40 @@ namespace WPFExceptionHandler
             LogDebugAdded?.Invoke(sender, new LogDebugAddedEventArgs(entry));
         }
 
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="sender"></param>
+        /// <param name="args"></param>
+        public delegate void ExceptionCaughtEventHandler(object sender, ExceptionCaughtEventArgs args);
+
+        /// <summary>
+        /// 
+        /// </summary>
+        public static event ExceptionCaughtEventHandler ExceptionCaught;
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="sender"></param>
+        /// <param name="exception"></param>
+        /// <param name="isCritical"></param>
+        private static void RaiseExceptionCaught(object sender, Exception exception, bool isHandled = false, bool isCritical = false)
+        {
+            ExceptionCaught?.Invoke(sender, new ExceptionCaughtEventArgs(exception, isHandled, isCritical));
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="sender"></param>
+        /// <param name="message"></param>
+        /// <param name="isCritical"></param>
+        private static void RaiseExceptionCaught(object sender, string message, bool isHandled = false, bool isCritical = false)
+        {
+            ExceptionCaught?.Invoke(sender, new ExceptionCaughtEventArgs(message, isHandled, isCritical));
+        }
+
         private static string _exceptionLogPathAlt;
         private static string _exceptionLogPath;
         private static bool _initialized = false;
@@ -61,6 +97,7 @@ namespace WPFExceptionHandler
         private static Queue<byte[]> _logEntries = new Queue<byte[]>();
         private static Queue<Task> _pendingLogTasks = new Queue<Task>();
         private static Task _currentLogTask = null;
+        private static Exception _lastCaughtException = null;
 
         /// <summary>
         /// 
@@ -109,10 +146,15 @@ namespace WPFExceptionHandler
 
             TaskScheduler.UnobservedTaskException += new EventHandler<UnobservedTaskExceptionEventArgs>((s, e) =>
             {
+                if (e.Observed)
+                    return;
+
                 try
                 {
                     EHLogGenericError(e.Exception);
                     e.SetObserved();
+                    _lastCaughtException = e.Exception;
+                    RaiseExceptionCaught(s, e.Exception, true);
                 }
                 catch (Exception ex)
                 {
@@ -122,10 +164,16 @@ namespace WPFExceptionHandler
 
             app.DispatcherUnhandledException += new DispatcherUnhandledExceptionEventHandler((s, e) =>
             {
+                if (e.Handled)
+                    return;
+
                 try
                 {
                     EHLogGenericError(e.Exception);
+                    // TODO: Maybe it's not a good idea to set every unhandled exception as handled...
                     e.Handled = true;
+                    _lastCaughtException = e.Exception;
+                    RaiseExceptionCaught(s, e.Exception, true);
                 }
                 catch (Exception ex)
                 {
@@ -135,10 +183,16 @@ namespace WPFExceptionHandler
 
             app.Dispatcher.UnhandledException += new DispatcherUnhandledExceptionEventHandler((s, e) =>
             {
+                if (e.Handled)
+                    return;
+
                 try
                 {
                     EHLogGenericError(e.Exception);
+                    // TODO: Maybe it's not a good idea to set every unhandled exception as handled...
                     e.Handled = true;
+                    _lastCaughtException = e.Exception;
+                    RaiseExceptionCaught(s, e.Exception, true);
                 }
                 catch (Exception ex)
                 {
@@ -148,32 +202,60 @@ namespace WPFExceptionHandler
 
             domain.UnhandledException += new UnhandledExceptionEventHandler((s, e) =>
             {
-                bool exceptioncatched = false;
+                bool exceptioncaught = false;
+                Debug.Print("Domain.UnhandledException");
                 
-                if (e != null)
+                if (e != null && e.ExceptionObject != null)
+                    if (e.ExceptionObject == _lastCaughtException)
+                        return;
+
                     try
                     {
-                        EHLogGenericError((Exception)e.ExceptionObject);
-                        exceptioncatched = true;
+                        if (e.IsTerminating)
+                            EHLogCriticalError((Exception)e.ExceptionObject);
+                        else
+                            EHLogGenericError((Exception)e.ExceptionObject);
+                        exceptioncaught = true;
+                        _lastCaughtException = (Exception)e.ExceptionObject;
                     }
                     catch (Exception ex)
                     {
-                        EHLogCriticalError("Error occured while logging exception: " + ex.Message);
+                        // TODO: Logging might fail and we don't want to create another exception
+                        // by trying to log again, but without a try-catch-block. Maybe we should
+                        // try to create a specific exception for when logging fails, so it can
+                        // be separated from not logging related exceptions (whichever should arise
+                        // from this try block ...
+                        // EHLogCriticalError("Error occured while logging exception: " + ex.Message);
                     }
                 
-                if (!exceptioncatched)
-                    EHLogCriticalError("Unknown critical exception occured.");
-
-                if (e.IsTerminating)
+                if (!exceptioncaught)
+                {
+                    // See TODO above ...
+                    // EHLogCriticalError("Unknown critical exception occured.");
+                    RaiseExceptionCaught(s, "Unknown critical exception occured.");
+                }
+                else if (e.IsTerminating)
+                {
                     EHLogCriticalError("App is terminating.");
+                    RaiseExceptionCaught(s, (Exception)e.ExceptionObject, false, true);
+                }
+                else
+                {
+                    RaiseExceptionCaught(s, (Exception)e.ExceptionObject);
+                }
             });
 
             domain.FirstChanceException += new EventHandler<FirstChanceExceptionEventArgs>((s, e) =>
             {
+                if (e.Exception == _lastCaughtException)
+                    return;
+                Debug.Print("Domain.FirstChanceException");
+
                 try
                 {
                     EHLogGenericError(e.Exception);
-                    Console.WriteLine(e.Exception.Source.ToString());
+                    _lastCaughtException = e.Exception;
+                    RaiseExceptionCaught(s, e.Exception);
                 }
                 catch (Exception ex)
                 {
@@ -668,7 +750,7 @@ namespace WPFExceptionHandler
             /// <returns></returns>
             public override int GetHashCode()
             {
-                return 460171812 + EqualityComparer<string>.Default.GetHashCode(Message);
+                return 31 + EqualityComparer<string>.Default.GetHashCode(Message);
             }
 
             /// <summary>
@@ -720,7 +802,78 @@ namespace WPFExceptionHandler
             /// <returns></returns>
             public override int GetHashCode()
             {
-                return 1970138155 + EqualityComparer<LogEntry>.Default.GetHashCode(Entry);
+                return 37 + EqualityComparer<LogEntry>.Default.GetHashCode(Entry);
+            }
+        }
+
+        public class ExceptionCaughtEventArgs
+        {
+            private string _message;
+            
+            /// <summary>
+            /// 
+            /// </summary>
+            public Exception Exception { get; }
+            /// <summary>
+            /// 
+            /// </summary>
+            public string Message => Exception == null ? _message : Exception.Message;
+            /// <summary>
+            /// 
+            /// </summary>
+            public bool IsHandled { get; }
+            /// <summary>
+            /// 
+            /// </summary>
+            public bool IsCritical { get; }
+
+            /// <summary>
+            /// 
+            /// </summary>
+            /// <param name="exception"></param>
+            /// <param name="isHandled"></param>
+            /// <param name="isCritical"></param>
+            public ExceptionCaughtEventArgs(Exception exception, bool isHandled, bool isCritical = false)
+            {
+                Exception = exception;
+                IsHandled = isHandled;
+                IsCritical = isCritical;
+            }
+
+            /// <summary>
+            /// 
+            /// </summary>
+            /// <param name="message"></param>
+            /// <param name="isHandled"></param>
+            /// <param name="isCritical"></param>
+            public ExceptionCaughtEventArgs(string message, bool isHandled, bool isCritical = false)
+            {
+                _message = message;
+                IsHandled = isHandled;
+                IsCritical = isCritical;
+            }
+
+            /// <summary>
+            /// 
+            /// </summary>
+            /// <param name="obj"></param>
+            /// <returns></returns>
+            public override bool Equals(object obj)
+            {
+                if (!(obj is ExceptionCaughtEventArgs))
+                    return false;
+
+                ExceptionCaughtEventArgs args = (ExceptionCaughtEventArgs)obj;
+                return this == args;
+            }
+
+            /// <summary>
+            /// 
+            /// </summary>
+            /// <returns></returns>
+            public override int GetHashCode()
+            {
+                return 41 + (Exception != null ? EqualityComparer<Exception>.Default.GetHashCode(Exception) : EqualityComparer<string>.Default.GetHashCode(Message));
             }
         }
     }
