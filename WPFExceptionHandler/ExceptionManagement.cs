@@ -297,13 +297,13 @@ namespace WPFExceptionHandler
                 if (filePathValid)
                     _exceptionLogPathAlt = filePath;
                 else
-                    EHLogGenericError(string.Format("Alternative file path invalid ('{0}').", filePath));
+                    EHLogGenericError($"Alternative file path invalid ('{filePath}').");
             }
             catch (Exception exception)
             {
                 filePathValid = false;
                 EHLogGenericError(exception.Message);
-                EHLogGenericError(string.Format("Alternative file path could not be set ('{0}').", filePath));
+                EHLogGenericError($"Alternative file path could not be set ('{filePath}').");
             }
 
             return filePathValid;
@@ -361,12 +361,11 @@ namespace WPFExceptionHandler
         private static string CreateMessageString(string message, LogEntryType entryType, DateTime timeStamp)
         {
             string threadname = Thread.CurrentThread.Name;
-            string formattedtimestamp = timeStamp.ToString("yyyy-MM-dd hh:mm:ss.fff");
             string logentrytype = Enum.GetName(typeof(LogEntryType), entryType);
             if (string.IsNullOrEmpty(threadname))
-                return string.Format("{0}: ({1}) {2}\r\n", formattedtimestamp, logentrytype, message);
+                return $"{timeStamp:yyyy-MM-dd hh:mm:ss.fff}: ({logentrytype}) {message}\r\n";
             else
-                return string.Format("{0}: [{1}] ({2}) {3}\r\n", formattedtimestamp, threadname, logentrytype, message);
+                return $"{timeStamp:yyyy-MM-dd hh:mm:ss.fff}: [{threadname}] ({logentrytype}) {message}\r\n";
         }
 
         /// <summary>
@@ -449,19 +448,34 @@ namespace WPFExceptionHandler
         /// <returns></returns>
         private static string FormatException(Exception ex)
         {
-            string formattedexception;
-
             try
             {
-                formattedexception = string.Format("{0}: {1} ({2})", ex.Message, ex.StackTrace, ex.Source);
+                return $"{ex.Message}: {ex.StackTrace} ({ex.Source})";
             }
             catch (Exception e)
             {
                 EHLogGenericError(e);
-                formattedexception = ex.Message;
+                return ex.Message;
             }
-            
-            return formattedexception;
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <returns></returns>
+        private static void CorrectNullOrEmpty(ref object[] formatParameters)
+        {
+            if (formatParameters == null)
+                return;
+
+            for (int index = 0; index < formatParameters.Length; index++)
+                if (formatParameters[index] == null)
+                    formatParameters[index] = "[null]";
+                else if (formatParameters[index] is string)
+                    if (string.IsNullOrEmpty((string)formatParameters[index]))
+                        formatParameters[index] = "[empty]";
+                    else if (string.IsNullOrWhiteSpace((string)formatParameters[index]))
+                        formatParameters[index] = "[whitespace]";
         }
 
         /// <summary>
@@ -475,12 +489,15 @@ namespace WPFExceptionHandler
         /// </summary>
         /// <param name="message"></param>
         /// <param name="formatParameters"></param>
-        public static void EHLogDebug(string message, params string[] formatParameters)
+        public static void EHLogDebug(string message, params object[] formatParameters)
         {
             if (_includeDebugInformation)
             {
-                if (formatParameters != null & formatParameters.Length > 0)
+                if (formatParameters != null && formatParameters.Length > 0)
+                {
+                    CorrectNullOrEmpty(ref formatParameters);
                     WriteLogEntry(string.Format(message, formatParameters), LogEntryType.LE_INFO);
+                }
                 else
                     WriteLogEntry(message, LogEntryType.LE_INFO);
             }
@@ -490,24 +507,14 @@ namespace WPFExceptionHandler
         /// 
         /// </summary>
         /// <param name="message"></param>
-        /// <param name="value"></param>
-        /// <param name="trueString"></param>
-        /// <param name="falseString"></param>
-        public static void EHLogDebugBool(string message, bool value, string trueString, string falseString)
-        {
-            if (_includeDebugInformation)
-                WriteLogEntry(message.Replace("%1", value ? trueString : falseString), LogEntryType.LE_INFO);
-        }
-
-        /// <summary>
-        /// 
-        /// </summary>
-        /// <param name="message"></param>
         /// <param name="formatParameters"></param>
-        public static void EHLogWarning(string message, params string[] formatParameters)
+        public static void EHLogWarning(string message, params object[] formatParameters)
         {
-            if (formatParameters != null & formatParameters.Length > 0)
+            if (formatParameters != null && formatParameters.Length > 0)
+            {
+                CorrectNullOrEmpty(ref formatParameters);
                 WriteLogEntry(string.Format(message, formatParameters), LogEntryType.LE_WARNING);
+            }
             else
                 WriteLogEntry(message, LogEntryType.LE_WARNING);
         }
@@ -523,10 +530,13 @@ namespace WPFExceptionHandler
         /// </summary>
         /// <param name="message"></param>
         /// <param name="formatParameters"></param>
-        public static void EHLogGenericError(string message, params string[] formatParameters)
+        public static void EHLogGenericError(string message, params object[] formatParameters)
         {
-            if (formatParameters != null & formatParameters.Length > 0)
+            if (formatParameters != null && formatParameters.Length > 0)
+            {
+                CorrectNullOrEmpty(ref formatParameters);
                 WriteLogEntry(string.Format(message, formatParameters), LogEntryType.LE_ERROR_GENERIC);
+            }
             else
                 WriteLogEntry(message, LogEntryType.LE_ERROR_GENERIC);
         }
@@ -542,10 +552,13 @@ namespace WPFExceptionHandler
         /// </summary>
         /// <param name="message"></param>
         /// <param name="formatParameters"></param>
-        public static void EHLogCriticalError(string message, params string[] formatParameters)
+        public static void EHLogCriticalError(string message, params object[] formatParameters)
         {
-            if (formatParameters != null & formatParameters.Length > 0)
+            if (formatParameters != null && formatParameters.Length > 0)
+            {
+                CorrectNullOrEmpty(ref formatParameters);
                 WriteLogEntry(string.Format(message, formatParameters), LogEntryType.LE_ERROR_CRITICAL);
+            }
             else
                 WriteLogEntry(message, LogEntryType.LE_ERROR_CRITICAL);
         }
@@ -557,12 +570,15 @@ namespace WPFExceptionHandler
         /// <param name="message"></param>
         /// <param name="owner"></param>
         /// <param name="formatParameters"></param>
-        public static void EHMsgBox(LogEntryType type, string message, Window owner = null, params string[] formatParameters)
+        public static void EHMsgBox(LogEntryType type, string message, Window owner = null, params object[] formatParameters)
         {
             string formattedmessage;
             
-            if (formatParameters != null & formatParameters.Length > 0)
+            if (formatParameters != null && formatParameters.Length > 0)
+            {
+                CorrectNullOrEmpty(ref formatParameters);
                 formattedmessage = string.Format(message, formatParameters);
+            }
             else
                 formattedmessage = message;
 
@@ -594,12 +610,15 @@ namespace WPFExceptionHandler
         /// <param name="owner"></param>
         /// <param name="formatParameters"></param>
         /// <returns></returns>
-        public static MessageBoxResult EHMsgBoxYesNo(string message, Window owner = null, params string[] formatParameters)
+        public static MessageBoxResult EHMsgBoxYesNo(string message, Window owner = null, params object[] formatParameters)
         {
             string formattedmessage;
 
-            if (formatParameters != null & formatParameters.Length > 0)
+            if (formatParameters != null && formatParameters.Length > 0)
+            {
+                CorrectNullOrEmpty(ref formatParameters);
                 formattedmessage = string.Format(message, formatParameters);
+            }
             else
                 formattedmessage = message;
 
@@ -627,7 +646,7 @@ namespace WPFExceptionHandler
             {
                 if (exceptionMessage.IsEmptyMessage)
                     exceptionMessage.Message = "<Untraced>";
-                WriteLogEntry(string.Format("{0}: {1}", exceptionMessage.Message, ex.Message), exceptionMessage.EntryType);
+                WriteLogEntry($"{exceptionMessage.Message}: {ex.Message}", exceptionMessage.EntryType);
                 return ex.HResult;
             }
         }
@@ -649,7 +668,7 @@ namespace WPFExceptionHandler
             {
                 if (exceptionMessage.IsEmptyMessage)
                     exceptionMessage.Message = "<Untraced>";
-                WriteLogEntry(string.Format("{0}: {1}", exceptionMessage.Message, ex.Message), exceptionMessage.EntryType);
+                WriteLogEntry($"{exceptionMessage.Message}: {ex.Message}", exceptionMessage.EntryType);
                 return ex.HResult;
             }
         }
@@ -680,7 +699,7 @@ namespace WPFExceptionHandler
             /// <summary>
             /// 
             /// </summary>
-            public bool IsEmptyMessage => string.IsNullOrEmpty(Message);
+            public bool IsEmptyMessage => string.IsNullOrWhiteSpace(Message);
 
             /// <summary>
             /// 
