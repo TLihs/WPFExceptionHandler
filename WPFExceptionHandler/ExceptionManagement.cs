@@ -386,7 +386,7 @@ namespace WPFExceptionHandler
             if (_currentLogTask != null)
             {
                 _pendingLogTasks.Enqueue(WriteNextLogEntryAsync(message, entryType, timestamp));
-                _currentLogTask.GetAwaiter().OnCompleted(() =>
+                _currentLogTask?.GetAwaiter().OnCompleted(() =>
                 {
                     if (_pendingLogTasks.Count > 0)
                         _currentLogTask = _pendingLogTasks.Dequeue();
@@ -410,17 +410,19 @@ namespace WPFExceptionHandler
         private static async Task WriteNextLogEntryAsync(string message, LogEntryType entryType, DateTime timestamp)
         {
             string logmessage = CreateMessageString(message, entryType, timestamp);
-            Console.Write(logmessage);
+            Debug.Print(logmessage.Replace("\r", "").Replace("\n", ""));
+            Console.WriteLine(logmessage);
             if (EHUseFileLogging)
             {
-                byte[] logmessagebytes = Encoding.UTF8.GetBytes(logmessage); ;
+                byte[] logmessagebytes = Encoding.UTF8.GetBytes(logmessage);
                 try
                 {
                     _logEntries.Enqueue(logmessagebytes);
                     while (_logEntries.Count > 0)
                     {
                         logmessagebytes = _logEntries.Dequeue();
-                        await _logFileStream.WriteAsync(logmessagebytes, 0, logmessagebytes.Length);
+                        if (logmessagebytes != null)
+                            await _logFileStream.WriteAsync(logmessagebytes, 0, logmessagebytes.Length);
                     }
                     await _logFileStream.FlushAsync();
 
