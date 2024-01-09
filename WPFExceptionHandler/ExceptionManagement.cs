@@ -4,7 +4,6 @@
 
 using Microsoft.VisualStudio;
 using System;
-using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -673,6 +672,22 @@ namespace WPFExceptionHandler
                 WriteLogEntry($"{exceptionMessage.Message}: {ex.Message}", exceptionMessage.EntryType);
                 return ex.HResult;
             }
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="hr"></param>
+        /// <returns></returns>
+        public static void SafeLogException(Exception ex, string functionName, string propertyName, string message, bool criticalError)
+        {
+            if (criticalError)
+            {
+                EHLogGenericError($"{functionName}() - ({propertyName}) {message}");
+                EHLogGenericError(ex);
+            }
+            else
+                EHLogWarning($"{functionName}() - ({propertyName}) {message}");
         }
 
         /// <summary>
