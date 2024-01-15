@@ -14,6 +14,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Threading;
+using static WPFExceptionHandler.ExceptionManagement;
 
 namespace WPFExceptionHandler
 {
@@ -22,12 +23,23 @@ namespace WPFExceptionHandler
         /// <summary>
         /// Enumeration of types of log entries that are defined for exception handling and/or debug logging.
         /// </summary>
-        public enum LogEntryType
+        public enum LogEntryTypes
         {
+            LE_NOT_INITIALIZED,
             LE_INFO,
             LE_WARNING,
             LE_ERROR_GENERIC,
             LE_ERROR_CRITICAL
+        }
+
+        public enum ExceptionManagementStates
+        {
+            EMS_INITIALIZED = 0x0001,
+            EMS_FILESTREAM_OPENED = 0x0100,
+            EMS_ACCESSING_FILESTREAM = 0x0200,
+            EMS_FILESTREAM_NOT_ACCESSIBLE = 0x0400,
+            EMS_DISPOSING = 0x0010,
+            EMS_DISPOSED = 0x0020
         }
 
         /// <summary>
@@ -47,7 +59,7 @@ namespace WPFExceptionHandler
         /// </summary>
         /// <param name="sender"></param>
         /// <param name="entry"></param>
-        private static void RaiseLogDebugAdded(object sender, LogEntry entry)
+        private static void RaiseLogDebugAdded(object sender, LogMessage entry)
         {
             LogDebugAdded?.Invoke(sender, new LogDebugAddedEventArgs(entry));
         }
@@ -86,17 +98,16 @@ namespace WPFExceptionHandler
             ExceptionCaught?.Invoke(sender, new ExceptionCaughtEventArgs(message, isHandled, isCritical));
         }
 
+        private static readonly char[] _NEW_LINE_CHARS = { '\r', '\n' };
+        
         private static string _exceptionLogPathAlt;
         private static string _exceptionLogPath;
-        private static bool _initialized = false;
-        private static bool _shutdownStarted = false;
-        private static bool _disposed = false;
         private static bool _includeDebugInformation = true;
         private static FileStream _logFileStream;
-        private static Queue<byte[]> _logEntries = new Queue<byte[]>();
-        private static Queue<Task> _pendingLogTasks = new Queue<Task>();
-        private static Task _currentLogTask = null;
+        private static Queue<LogMessage> _logEntries = new Queue<LogMessage>();
         private static Exception _lastCaughtException = null;
+        private static ExceptionManagementStates _state = 0;
+        private static Thread _loggingThread = null;
 
         /// <summary>
         /// 
@@ -113,13 +124,13 @@ namespace WPFExceptionHandler
         /// </summary>
         static ExceptionManagement()
         {
-            Application.Current.Exit += new ExitEventHandler((s, e) =>
+            ThreadStart threadStart = new ThreadStart(WriteLoggingContinuously);
+            _loggingThread = new Thread(threadStart)
             {
-                if (e.ApplicationExitCode != 0)
-                    EHLogCriticalError("ExceptionManagement exited with fault (exit code = " + e.ApplicationExitCode + ").");
-                else
-                    EHLogDebug("ExceptionManagement exited without any fault.");
-            });
+                IsBackground = true,
+                Name = "Exception Management Logging",
+                Priority = ThreadPriority.BelowNormal,
+            };
         }
 
         /// <summary>
@@ -131,7 +142,7 @@ namespace WPFExceptionHandler
         /// <param name="useFileLogging"></param>
         public static void CreateExceptionManagement(Application app, AppDomain domain, bool includeDebugInformation = true, bool useFileLogging = false)
         {
-            if (_initialized)
+            if ((_state & ExceptionManagementStates.EMS_INITIALIZED) == ExceptionManagementStates.EMS_INITIALIZED)
             {
                 EHLogWarning("ExceptionManagement::CreateExceptionManagement(...) - ExceptionManagement already initialized.");
                 return;
@@ -217,7 +228,7 @@ namespace WPFExceptionHandler
                         exceptioncaught = true;
                         _lastCaughtException = (Exception)e.ExceptionObject;
                     }
-                    catch (Exception ex)
+                    catch
                     {
                         // TODO: Logging might fail and we don't want to create another exception
                         // by trying to log again, but without a try-catch-block. Maybe we should
@@ -269,10 +280,26 @@ namespace WPFExceptionHandler
                 else
                     EHLogDebug("Application exited without any fault.");
 
-                Shutdown();
+                _state |= ExceptionManagementStates.EMS_DISPOSING;
+                _state ^= ExceptionManagementStates.EMS_INITIALIZED;
+
+                while (_loggingThread.IsAlive)
+                {
+
+                }
             });
 
-            _initialized = true;
+            if (app != Application.Current)
+                Application.Current.Exit += new ExitEventHandler((s, e) =>
+                {
+                    if (e.ApplicationExitCode != 0)
+                        EHLogCriticalError("ExceptionManagement exited with fault (exit code = " + e.ApplicationExitCode + ").");
+                    else
+                        EHLogDebug("ExceptionManagement exited without any fault.");
+                });
+
+            _state |= ExceptionManagementStates.EMS_INITIALIZED;
+            _loggingThread.Start();
         }
 
         /// <summary>
@@ -311,42 +338,80 @@ namespace WPFExceptionHandler
         /// <summary>
         /// 
         /// </summary>
-        private static void Shutdown()
-        {
-            _shutdownStarted = true;
-            if (EHUseFileLogging)
-                _logFileStream.Close();
-            _disposed = true;
-        }
-
-        /// <summary>
-        /// 
-        /// </summary>
         private static void CreateLogFile()
         {
+            if ((_state & ExceptionManagementStates.EMS_FILESTREAM_OPENED) == ExceptionManagementStates.EMS_FILESTREAM_OPENED)
+                return;
+
+            if ((_state & ExceptionManagementStates.EMS_FILESTREAM_NOT_ACCESSIBLE) == ExceptionManagementStates.EMS_FILESTREAM_NOT_ACCESSIBLE)
+                return;
+
+            if ((_state & ExceptionManagementStates.EMS_DISPOSING) == ExceptionManagementStates.EMS_DISPOSING)
+                return;
+
+            if ((_state & ExceptionManagementStates.EMS_DISPOSED) == ExceptionManagementStates.EMS_DISPOSED)
+                return;
+
             string logpath = EHExceptionLogFilePath;
             bool newlog = false;
 
-            FileInfo logfileinfo = new FileInfo(logpath);
-            if (!File.Exists(logpath))
+            FileInfo logfileinfo;
+            try
             {
-                Directory.CreateDirectory(logfileinfo.DirectoryName);
-                newlog = true;
+                logfileinfo = new FileInfo(logpath);
+                if (!File.Exists(logpath))
+                {
+                    Directory.CreateDirectory(logfileinfo.DirectoryName);
+                    newlog = true;
+                }
+            }
+            catch(Exception ex)
+            {
+                _state |= ExceptionManagementStates.EMS_FILESTREAM_NOT_ACCESSIBLE;
+                EHUseFileLogging = false;
+                Debug.Print(ex.Message);
+                if (Console.IsOutputRedirected)
+                    Console.WriteLine(ex.Message);
+                return;
             }
 
-            if (_logFileStream == null)
+            try
             {
+                _logFileStream?.Flush();
+                _logFileStream?.Close();
+                _logFileStream = null;
                 _logFileStream = logfileinfo.Open(FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.Read);
 
                 if (newlog)
-                {
                     EHLogDebug("Log created.");
-                }
                 else
                 {
                     _logFileStream.Position = _logFileStream.Length;
                     EHLogDebug("Log reopened.");
                 }
+                _state |= ExceptionManagementStates.EMS_FILESTREAM_OPENED;
+            }
+            catch (Exception ex)
+            {
+                _state |= ExceptionManagementStates.EMS_FILESTREAM_NOT_ACCESSIBLE;
+                EHUseFileLogging = false;
+                Console.WriteLine(ex.Message);
+                return;
+            }
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        private static void CloseFileStream()
+        {
+            if ((_state & ExceptionManagementStates.EMS_FILESTREAM_OPENED) == ExceptionManagementStates.EMS_FILESTREAM_OPENED)
+            {
+                _logFileStream.Close();
+                _logFileStream = null;
+                _state |= ExceptionManagementStates.EMS_DISPOSED;
+                _state ^= ExceptionManagementStates.EMS_DISPOSING;
+                _state ^= ExceptionManagementStates.EMS_FILESTREAM_OPENED;
             }
         }
 
@@ -357,10 +422,10 @@ namespace WPFExceptionHandler
         /// <param name="entryType"></param>
         /// <param name="timeStamp"></param>
         /// <returns></returns>
-        private static string CreateMessageString(string message, LogEntryType entryType, DateTime timeStamp)
+        private static string CreateMessageString(string message, LogEntryTypes entryType, DateTime timeStamp)
         {
             string threadname = Thread.CurrentThread.Name;
-            string logentrytype = Enum.GetName(typeof(LogEntryType), entryType);
+            string logentrytype = Enum.GetName(typeof(LogEntryTypes), entryType);
             if (string.IsNullOrEmpty(threadname))
                 return $"{timeStamp:yyyy-MM-dd hh:mm:ss.fff}: ({logentrytype}) {message}\r\n";
             else
@@ -372,31 +437,22 @@ namespace WPFExceptionHandler
         /// </summary>
         /// <param name="message"></param>
         /// <param name="entryType"></param>
-        private static void WriteLogEntry(string message, LogEntryType entryType)
+        private static void WriteLogEntry(string message, LogEntryTypes entryType)
         {
-            if (_disposed)
-                return;
-            
-            DateTime timestamp = DateTime.Now;
-
-            if (EHUseFileLogging)
-                CreateLogFile();
-
-            if (_currentLogTask != null)
+            if ((_state & ExceptionManagementStates.EMS_DISPOSED) == ExceptionManagementStates.EMS_DISPOSED)
             {
-                _pendingLogTasks.Enqueue(WriteNextLogEntryAsync(message, entryType, timestamp));
-                _currentLogTask?.GetAwaiter().OnCompleted(() =>
-                {
-                    if (_pendingLogTasks.Count > 0)
-                        _currentLogTask = _pendingLogTasks.Dequeue();
-                    else
-                        _currentLogTask = null;
-                });
+                Debug.Print("ExceptionManagement already disposed");
+                if (Console.IsOutputRedirected)
+                    Console.WriteLine("ExceptionManagement already disposed");
+                return;
             }
-            else
-                _currentLogTask = WriteNextLogEntryAsync(message, entryType, timestamp);
 
-            RaiseLogDebugAdded(null, new LogEntry(message, entryType, timestamp));
+            LogMessage logmessage = new LogMessage(DateTime.Now, message, entryType);
+
+            lock (_logEntries)
+                _logEntries.Enqueue(logmessage);
+
+            RaiseLogDebugAdded(null, logmessage);
         }
 
         /// <summary>
@@ -406,39 +462,91 @@ namespace WPFExceptionHandler
         /// <param name="entryType"></param>
         /// <param name="timestamp"></param>
         /// <returns></returns>
-        private static async Task WriteNextLogEntryAsync(string message, LogEntryType entryType, DateTime timestamp)
+        private static void WriteNextLogEntry(LogMessage message)
         {
-            string logmessage = CreateMessageString(message, entryType, timestamp);
-            Debug.Print(logmessage.Replace("\r", "").Replace("\n", ""));
-            Console.WriteLine(logmessage);
-            if (EHUseFileLogging)
+            string logmessage = message.ToString();
+            string logmessagetrimmed = logmessage.TrimEnd(_NEW_LINE_CHARS);
+            Debug.Print(logmessagetrimmed);
+            if (Console.IsOutputRedirected)
+                Console.WriteLine(logmessagetrimmed);
+
+            if ((_state & ExceptionManagementStates.EMS_FILESTREAM_OPENED) == ExceptionManagementStates.EMS_FILESTREAM_OPENED)
             {
-                byte[] logmessagebytes = Encoding.UTF8.GetBytes(logmessage);
+                _state |= ExceptionManagementStates.EMS_ACCESSING_FILESTREAM;
+
                 try
                 {
-                    _logEntries.Enqueue(logmessagebytes);
-                    while (_logEntries.Count > 0)
+                    byte[] buffer = Encoding.UTF8.GetBytes(logmessage);
+                    if (_logFileStream == null)
                     {
-                        logmessagebytes = _logEntries.Dequeue();
-                        if (logmessagebytes != null)
-                            await _logFileStream.WriteAsync(logmessagebytes, 0, logmessagebytes.Length);
+                        _state ^= ExceptionManagementStates.EMS_FILESTREAM_OPENED;
+                        throw new ArgumentNullException("File stream is null");
                     }
-                    await _logFileStream.FlushAsync();
-
-                    if (_shutdownStarted)
-                    {
-                        _logFileStream.Close();
-                        _disposed = true;
-                    }
+                    _logFileStream.Write(buffer, 0, buffer.Length);
+                    _logFileStream.Flush();
                 }
                 catch (Exception ex)
                 {
-                    if (!(_disposed || _shutdownStarted))
-                    {
+                    Debug.Print(ex.ToString());
+                    if (Console.IsOutputRedirected)
                         Console.WriteLine(ex.ToString());
-                        _logEntries.Enqueue(logmessagebytes);
-                    }
                 }
+                finally
+                {
+                    _state ^= ExceptionManagementStates.EMS_ACCESSING_FILESTREAM;
+                }
+            }
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        private static void WriteLoggingContinuously()
+        {
+            try
+            {
+                LogMessage logmessage;
+
+                while ((_state & ExceptionManagementStates.EMS_DISPOSED) != ExceptionManagementStates.EMS_DISPOSED)
+                {
+                    if (EHUseFileLogging && (_state & ExceptionManagementStates.EMS_FILESTREAM_OPENED) != ExceptionManagementStates.EMS_FILESTREAM_OPENED)
+                        CreateLogFile();
+
+                    if (!((_state & ExceptionManagementStates.EMS_ACCESSING_FILESTREAM) == ExceptionManagementStates.EMS_ACCESSING_FILESTREAM))
+                    {
+                        try
+                        {
+                            lock (_logEntries)
+                            {
+                                if (_logEntries.Count > 0)
+                                    logmessage = _logEntries.Dequeue();
+                                else
+                                {
+                                    Thread.Sleep(10);
+                                    continue;
+                                }
+                            }
+                            WriteNextLogEntry(logmessage);
+                        }
+                        catch (Exception ex)
+                        {
+                            Debug.Print(ex.ToString());
+                            if (Console.IsOutputRedirected)
+                                Console.WriteLine(ex.ToString());
+                        }
+                    }
+
+                    if ((_state & ExceptionManagementStates.EMS_DISPOSING) == ExceptionManagementStates.EMS_DISPOSING)
+                        lock (_logEntries)
+                            if (_logEntries.Count == 0)
+                                CloseFileStream();
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.Print(ex.Message);
+                if (Console.IsOutputRedirected)
+                    Console.WriteLine(ex.Message);
             }
         }
 
@@ -453,10 +561,9 @@ namespace WPFExceptionHandler
             {
                 return $"{ex.Message}: {ex.StackTrace} ({ex.Source})";
             }
-            catch (Exception e)
+            catch
             {
-                EHLogGenericError(e);
-                return ex.Message;
+                return $"{ex.Message}: {ex.StackTrace} (<unavailable>)";
             }
         }
 
@@ -472,10 +579,10 @@ namespace WPFExceptionHandler
             for (int index = 0; index < formatParameters.Length; index++)
                 if (formatParameters[index] == null)
                     formatParameters[index] = "[null]";
-                else if (formatParameters[index] is string)
-                    if (string.IsNullOrEmpty((string)formatParameters[index]))
+                else if (formatParameters[index] is string parmeters)
+                    if (string.IsNullOrEmpty(parmeters))
                         formatParameters[index] = "[empty]";
-                    else if (string.IsNullOrWhiteSpace((string)formatParameters[index]))
+                    else if (string.IsNullOrWhiteSpace(parmeters))
                         formatParameters[index] = "[whitespace]";
         }
 
@@ -497,10 +604,10 @@ namespace WPFExceptionHandler
                 if (formatParameters != null && formatParameters.Length > 0)
                 {
                     CorrectNullOrEmpty(ref formatParameters);
-                    WriteLogEntry(string.Format(message, formatParameters), LogEntryType.LE_INFO);
+                    WriteLogEntry(string.Format(message, formatParameters), LogEntryTypes.LE_INFO);
                 }
                 else
-                    WriteLogEntry(message, LogEntryType.LE_INFO);
+                    WriteLogEntry(message, LogEntryTypes.LE_INFO);
             }
         }
 
@@ -514,17 +621,17 @@ namespace WPFExceptionHandler
             if (formatParameters != null && formatParameters.Length > 0)
             {
                 CorrectNullOrEmpty(ref formatParameters);
-                WriteLogEntry(string.Format(message, formatParameters), LogEntryType.LE_WARNING);
+                WriteLogEntry(string.Format(message, formatParameters), LogEntryTypes.LE_WARNING);
             }
             else
-                WriteLogEntry(message, LogEntryType.LE_WARNING);
+                WriteLogEntry(message, LogEntryTypes.LE_WARNING);
         }
 
         /// <summary>
         /// 
         /// </summary>
         /// <param name="exception"></param>
-        public static void EHLogGenericError(Exception exception) => WriteLogEntry(FormatException(exception), LogEntryType.LE_ERROR_GENERIC);
+        public static void EHLogGenericError(Exception exception) => WriteLogEntry(FormatException(exception), LogEntryTypes.LE_ERROR_GENERIC);
 
         /// <summary>
         /// 
@@ -536,17 +643,17 @@ namespace WPFExceptionHandler
             if (formatParameters != null && formatParameters.Length > 0)
             {
                 CorrectNullOrEmpty(ref formatParameters);
-                WriteLogEntry(string.Format(message, formatParameters), LogEntryType.LE_ERROR_GENERIC);
+                WriteLogEntry(string.Format(message, formatParameters), LogEntryTypes.LE_ERROR_GENERIC);
             }
             else
-                WriteLogEntry(message, LogEntryType.LE_ERROR_GENERIC);
+                WriteLogEntry(message, LogEntryTypes.LE_ERROR_GENERIC);
         }
 
         /// <summary>
         /// 
         /// </summary>
         /// <param name="exception"></param>
-        public static void EHLogCriticalError(Exception exception) => WriteLogEntry(FormatException(exception), LogEntryType.LE_ERROR_CRITICAL);
+        public static void EHLogCriticalError(Exception exception) => WriteLogEntry(FormatException(exception), LogEntryTypes.LE_ERROR_CRITICAL);
 
         /// <summary>
         /// 
@@ -558,10 +665,10 @@ namespace WPFExceptionHandler
             if (formatParameters != null && formatParameters.Length > 0)
             {
                 CorrectNullOrEmpty(ref formatParameters);
-                WriteLogEntry(string.Format(message, formatParameters), LogEntryType.LE_ERROR_CRITICAL);
+                WriteLogEntry(string.Format(message, formatParameters), LogEntryTypes.LE_ERROR_CRITICAL);
             }
             else
-                WriteLogEntry(message, LogEntryType.LE_ERROR_CRITICAL);
+                WriteLogEntry(message, LogEntryTypes.LE_ERROR_CRITICAL);
         }
 
         /// <summary>
@@ -571,7 +678,7 @@ namespace WPFExceptionHandler
         /// <param name="message"></param>
         /// <param name="owner"></param>
         /// <param name="formatParameters"></param>
-        public static void EHMsgBox(LogEntryType type, string message, Window owner = null, params object[] formatParameters)
+        public static void EHMsgBox(LogEntryTypes type, string message, Window owner = null, params object[] formatParameters)
         {
             string formattedmessage;
             
@@ -588,11 +695,11 @@ namespace WPFExceptionHandler
             MessageBoxImage severityimage = MessageBoxImage.Information;
             switch (type)
             {
-                case LogEntryType.LE_WARNING:
+                case LogEntryTypes.LE_WARNING:
                     title = "Warning";
                     severityimage = MessageBoxImage.Warning;
                     break;
-                case LogEntryType.LE_ERROR_GENERIC | LogEntryType.LE_ERROR_CRITICAL:
+                case LogEntryTypes.LE_ERROR_GENERIC | LogEntryTypes.LE_ERROR_CRITICAL:
                     title = "Error";
                     severityimage = MessageBoxImage.Error;
                     break;
@@ -623,7 +730,7 @@ namespace WPFExceptionHandler
             else
                 formattedmessage = message;
 
-            WriteLogEntry(formattedmessage, LogEntryType.LE_INFO);
+            WriteLogEntry(formattedmessage, LogEntryTypes.LE_INFO);
             if (owner != null)
                 return MessageBox.Show(owner, formattedmessage, "Question", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.Yes, MessageBoxOptions.DefaultDesktopOnly);
             else
@@ -697,7 +804,15 @@ namespace WPFExceptionHandler
         /// <returns></returns>
         public static string GetHRToMessage(int hr)
         {
-            return Marshal.GetExceptionForHR(hr).Message;
+            try
+            {
+                return Marshal.GetExceptionForHR(hr)?.Message;
+            }
+            catch (Exception ex)
+            {
+                EHLogGenericError(ex);
+                return string.Empty;
+            }
         }
 
         /// <summary>
@@ -708,11 +823,15 @@ namespace WPFExceptionHandler
             /// <summary>
             /// 
             /// </summary>
-            public string Message { get; set; }
+            public DateTime Timestamp;
             /// <summary>
             /// 
             /// </summary>
-            public LogEntryType EntryType { get; }
+            public string Message;
+            /// <summary>
+            /// 
+            /// </summary>
+            public LogEntryTypes EntryType;
             /// <summary>
             /// 
             /// </summary>
@@ -723,79 +842,19 @@ namespace WPFExceptionHandler
             /// </summary>
             /// <param name="message"></param>
             /// <param name="entryType"></param>
-            public LogMessage(string message = "", LogEntryType entryType = LogEntryType.LE_ERROR_GENERIC)
+            public LogMessage(DateTime timestamp, string message, LogEntryTypes entryType = LogEntryTypes.LE_NOT_INITIALIZED)
             {
+                Timestamp = timestamp;
                 Message = message;
                 EntryType = entryType;
             }
-        }
-
-        /// <summary>
-        /// 
-        /// </summary>
-        public class LogEntry
-        {
-            /// <summary>
-            /// 
-            /// </summary>
-            public DateTime TimeStamp { get; }
-            /// <summary>
-            /// 
-            /// </summary>
-            public string TimeStampText => TimeStamp.ToString("yyyy-MM-dd hh:mm:ss.fff");
-            /// <summary>
-            /// 
-            /// </summary>
-            public string Message { get; protected set; }
-            /// <summary>
-            /// 
-            /// </summary>
-            public LogEntryType EntryType { get; protected set; }
-            /// <summary>
-            /// 
-            /// </summary>
-            public string EntryTypeText => Enum.GetName(typeof(LogEntryType), EntryType);
 
             /// <summary>
             /// 
             /// </summary>
-            /// <param name="message"></param>
-            /// <param name="entryType"></param>
-            /// <param name="timeStamp"></param>
-            public LogEntry(string message, LogEntryType entryType, DateTime timeStamp)
-            {
-                Message = message;
-                EntryType = entryType;
-                TimeStamp = timeStamp;
-            }
-
-            /// <summary>
-            /// 
-            /// </summary>
-            /// <param name="obj"></param>
-            /// <returns></returns>
-            public override bool Equals(object obj)
-            {
-                return obj is LogEntry entry &&
-                       Message == entry.Message;
-            }
-
-            /// <summary>
-            /// 
-            /// </summary>
-            /// <returns></returns>
-            public override int GetHashCode()
-            {
-                return 31 + EqualityComparer<string>.Default.GetHashCode(Message);
-            }
-
-            /// <summary>
-            /// 
-            /// </summary>
-            /// <returns></returns>
             public override string ToString()
             {
-                return CreateMessageString(Message, EntryType, TimeStamp);
+                return CreateMessageString(Message, EntryType, Timestamp);
             }
         }
 
@@ -807,13 +866,13 @@ namespace WPFExceptionHandler
             /// <summary>
             /// 
             /// </summary>
-            public LogEntry Entry { get; }
+            public LogMessage Entry { get; }
 
             /// <summary>
             /// 
             /// </summary>
             /// <param name="entry"></param>
-            public LogDebugAddedEventArgs(LogEntry entry)
+            public LogDebugAddedEventArgs(LogMessage entry)
             {
                 Entry = entry;
             }
@@ -829,7 +888,7 @@ namespace WPFExceptionHandler
                     return false;
 
                 LogDebugAddedEventArgs args = (LogDebugAddedEventArgs) obj;
-                return Entry == args.Entry;
+                return Entry.Equals(args.Entry);
             }
 
             /// <summary>
@@ -838,7 +897,7 @@ namespace WPFExceptionHandler
             /// <returns></returns>
             public override int GetHashCode()
             {
-                return 37 + EqualityComparer<LogEntry>.Default.GetHashCode(Entry);
+                return 37 + EqualityComparer<LogMessage>.Default.GetHashCode(Entry);
             }
         }
 
