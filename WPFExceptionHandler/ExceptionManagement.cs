@@ -436,14 +436,13 @@ namespace WPFExceptionHandler
         /// <param name="entryType"></param>
         /// <param name="timeStamp"></param>
         /// <returns></returns>
-        private static string CreateMessageString(string message, LogEntryTypes entryType, DateTime timeStamp)
+        private static string CreateMessageString(string threadName, string message, LogEntryTypes entryType, DateTime timeStamp)
         {
-            string threadname = Thread.CurrentThread.Name;
             string logentrytype = Enum.GetName(typeof(LogEntryTypes), entryType);
-            if (string.IsNullOrEmpty(threadname))
+            if (string.IsNullOrEmpty(threadName))
                 return $"{timeStamp:yyyy-MM-dd hh:mm:ss.fff}: ({logentrytype}) {message}\r\n";
             else
-                return $"{timeStamp:yyyy-MM-dd hh:mm:ss.fff}: [{threadname}] ({logentrytype}) {message}\r\n";
+                return $"{timeStamp:yyyy-MM-dd hh:mm:ss.fff}: [{threadName}] ({logentrytype}) {message}\r\n";
         }
 
         /// <summary>
@@ -461,7 +460,7 @@ namespace WPFExceptionHandler
                 return;
             }
 
-            LogMessage logmessage = new LogMessage(DateTime.Now, message, entryType);
+            LogMessage logmessage = new LogMessage(DateTime.Now, Thread.CurrentThread.Name, message, entryType);
 
             lock (_logEntries)
                 _logEntries.Enqueue(logmessage);
@@ -915,6 +914,10 @@ namespace WPFExceptionHandler
             /// <summary>
             /// 
             /// </summary>
+            public string ThreadName;
+            /// <summary>
+            /// 
+            /// </summary>
             public string Message;
             /// <summary>
             /// 
@@ -930,9 +933,10 @@ namespace WPFExceptionHandler
             /// </summary>
             /// <param name="message"></param>
             /// <param name="entryType"></param>
-            public LogMessage(DateTime timestamp, string message, LogEntryTypes entryType = LogEntryTypes.NOT_INITIALIZED)
+            public LogMessage(DateTime timestamp, string threadName, string message, LogEntryTypes entryType = LogEntryTypes.NOT_INITIALIZED)
             {
                 Timestamp = timestamp;
+                ThreadName = threadName;
                 Message = message;
                 EntryType = entryType;
             }
@@ -942,7 +946,7 @@ namespace WPFExceptionHandler
             /// </summary>
             public override string ToString()
             {
-                return CreateMessageString(Message, EntryType, Timestamp);
+                return CreateMessageString(ThreadName, Message, EntryType, Timestamp);
             }
         }
 
