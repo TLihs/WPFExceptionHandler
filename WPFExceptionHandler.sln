@@ -7,6 +7,8 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "WPFExceptionHandler", "WPFE
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ExceptionTest", "ExceptionTest\ExceptionTest.csproj", "{A5E1CA88-CAFE-4C81-A7E6-8F333A1B9C02}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "NET8ExceptionHandler", "NET8ExceptionHandler\NET8ExceptionHandler.csproj", "{157D0843-C365-48F9-A2F6-A47ECFEBA6CA}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -21,6 +23,10 @@ Global
 		{A5E1CA88-CAFE-4C81-A7E6-8F333A1B9C02}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{A5E1CA88-CAFE-4C81-A7E6-8F333A1B9C02}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{A5E1CA88-CAFE-4C81-A7E6-8F333A1B9C02}.Release|Any CPU.Build.0 = Release|Any CPU
+		{157D0843-C365-48F9-A2F6-A47ECFEBA6CA}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{157D0843-C365-48F9-A2F6-A47ECFEBA6CA}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{157D0843-C365-48F9-A2F6-A47ECFEBA6CA}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{157D0843-C365-48F9-A2F6-A47ECFEBA6CA}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
