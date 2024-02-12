@@ -5,6 +5,7 @@
 using Microsoft.VisualStudio;
 using System.Diagnostics;
 using System.IO;
+using System.Runtime.CompilerServices;
 using System.Runtime.ExceptionServices;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -86,10 +87,10 @@ namespace NET8ExceptionHandler
         /// <param name="exception"></param>
         /// <param name="isCritical"></param>
         private static void RaiseExceptionCaught(
-            object sender, Exception exception, bool isHandled = false,
+            object? sender, Exception exception, bool isHandled = false,
             bool isCritical = false)
         {
-            ExceptionCaught?.Invoke(sender, new ExceptionCaughtEventArgs(
+            ExceptionCaught?.Invoke(sender ?? new(), new ExceptionCaughtEventArgs(
                 exception, isHandled, isCritical));
         }
 
