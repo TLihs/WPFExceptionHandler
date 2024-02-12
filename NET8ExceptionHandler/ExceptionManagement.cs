@@ -11,12 +11,13 @@ using System.Text;
 using System.Windows;
 using System.Windows.Threading;
 
-namespace WPFExceptionHandler
+namespace NET8ExceptionHandler
 {
     public static class ExceptionManagement
     {
         /// <summary>
-        /// Enumeration of types of log entries that are defined for exception handling and/or debug logging.
+        /// Enumeration of types of log entries that are defined
+        /// for exception handling and/or debug logging.
         /// </summary>
         public enum LogEntryTypes
         {
@@ -28,6 +29,9 @@ namespace WPFExceptionHandler
             CRITICAL_ERROR
         }
 
+        /// <summary>
+        /// 
+        /// </summary>
         public enum ExceptionManagementStates
         {
             EMS_INITIALIZED = 0x0001,
