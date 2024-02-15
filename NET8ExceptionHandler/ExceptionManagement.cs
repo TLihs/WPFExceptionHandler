@@ -3,9 +3,9 @@
 // Licensed under MIT License
 
 using Microsoft.VisualStudio;
+using Microsoft.Win32.SafeHandles;
 using System.Diagnostics;
 using System.IO;
-using System.Runtime.CompilerServices;
 using System.Runtime.ExceptionServices;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -36,9 +36,9 @@ namespace NET8ExceptionHandler
         public enum ExceptionManagementStates
         {
             EMS_INITIALIZED = 0x0001,
-            EMS_FILESTREAM_OPENED = 0x0100,
-            EMS_ACCESSING_FILESTREAM = 0x0200,
-            EMS_FILESTREAM_NOT_ACCESSIBLE = 0x0400,
+            EMS_FILEHANDLE_OPENED = 0x0100,
+            EMS_ACCESSING_FILEHANDLE = 0x0200,
+            EMS_FILEHANDLE_NOT_ACCESSIBLE = 0x0400,
             EMS_MESSAGE_BUFFER_FULL = 0x0800,
             EMS_DISPOSING = 0x0010,
             EMS_DISPOSED = 0x0020
@@ -49,22 +49,31 @@ namespace NET8ExceptionHandler
         /// </summary>
         /// <param name="sender"></param>
         /// <param name="args"></param>
-        public delegate void LogDebugAddedEventHandler(
-            object? sender, LogDebugAddedEventArgs args);
+        public delegate void LogEntryAddedEventHandler(
+            object? sender, LogEntryAddedEventArgs args);
 
         /// <summary>
         /// 
         /// </summary>
-        public static event LogDebugAddedEventHandler? LogDebugAdded = null;
+        public static event LogEntryAddedEventHandler? LogEntryAdded = null;
 
         /// <summary>
         /// 
         /// </summary>
         /// <param name="sender"></param>
         /// <param name="entry"></param>
-        private static void RaiseLogDebugAdded(object? sender, LogMessage entry)
+        private static void RaiseLogEntryAdded(object? sender, LogMessage entry)
         {
-            LogDebugAdded?.Invoke(sender, new LogDebugAddedEventArgs(entry));
+            try
+            {
+                LogEntryAdded?.Invoke(sender, new LogEntryAddedEventArgs(entry));
+            }
+            catch (Exception e)
+            {
+                EHUseRaiseLogEntryAddedEvent = false;
+                EHLogGenericError(e);
+                EHLogWarning("Deactivated raising of log entry added events.");
+            }
         }
 
         /// <summary>
@@ -72,8 +81,8 @@ namespace NET8ExceptionHandler
         /// </summary>
         /// <param name="sender"></param>
         /// <param name="args"></param>
-        public delegate void ExceptionCaughtEventHandler(
-            object sender, ExceptionCaughtEventArgs args);
+        public delegate void ExceptionCaughtEventHandler(object sender,
+            ExceptionCaughtEventArgs args);
 
         /// <summary>
         /// 
@@ -86,12 +95,20 @@ namespace NET8ExceptionHandler
         /// <param name="sender"></param>
         /// <param name="exception"></param>
         /// <param name="isCritical"></param>
-        private static void RaiseExceptionCaught(
-            object? sender, Exception exception, bool isHandled = false,
-            bool isCritical = false)
+        private static void RaiseExceptionCaught(object? sender, Exception exception,
+            bool isHandled = false, bool isCritical = false)
         {
-            ExceptionCaught?.Invoke(sender ?? new(), new ExceptionCaughtEventArgs(
-                exception, isHandled, isCritical));
+            try
+            {
+                ExceptionCaught?.Invoke(sender ?? new(), new ExceptionCaughtEventArgs(
+                    exception, isHandled, isCritical));
+            }
+            catch (Exception e)
+            {
+                EHUseRaiseExceptionCaughtEvent = false;
+                EHLogGenericError(e);
+                EHLogWarning("Deactivated raising of exception caught events.");
+            }
         }
 
         /// <summary>
@@ -100,12 +117,20 @@ namespace NET8ExceptionHandler
         /// <param name="sender"></param>
         /// <param name="message"></param>
         /// <param name="isCritical"></param>
-        private static void RaiseExceptionCaught(
-            object sender, string message, bool isHandled = false,
-            bool isCritical = false)
+        private static void RaiseExceptionCaught(object sender, string message,
+            bool isHandled = false, bool isCritical = false)
         {
-            ExceptionCaught?.Invoke(sender, new ExceptionCaughtEventArgs(
-                message, isHandled, isCritical));
+            try
+            {
+                ExceptionCaught?.Invoke(sender, new ExceptionCaughtEventArgs(
+                    message, isHandled, isCritical));
+            }
+            catch (Exception e)
+            {
+                EHUseRaiseExceptionCaughtEvent = false;
+                EHLogGenericError(e);
+                EHLogWarning("Deactivated raising of exception caught events.");
+            }
         }
 
         private static readonly char[] _NEW_LINE_CHARS = ['\r', '\n'];
@@ -113,13 +138,13 @@ namespace NET8ExceptionHandler
         private static string _exceptionLogPathAlt = string.Empty;
         private static string _exceptionLogPath = string.Empty;
         private static bool _includeDebugInformation = true;
-        private static FileStream? _logFileStream = null;
-        private static Queue<LogMessage> _logEntries = new();
+        private static SafeFileHandle? _fileHandle = null;
         private static Exception? _lastCaughtException = null;
         private static ExceptionManagementStates _state = 0;
-        private static Thread _loggingThread;
-        private static MemoryStream _buffer = new();
-        private static Thread _bufferThread;
+        private static readonly Queue<LogMessage> _logEntries = new();
+        private static readonly Thread _loggingThread;
+        private static readonly MemoryStream _buffer = new();
+        private static readonly Thread _bufferThread;
 
         /// <summary>
         /// 
@@ -132,22 +157,24 @@ namespace NET8ExceptionHandler
         /// 
         /// </summary>
         public static bool EHUseFileLogging { get; set; }
+        public static bool EHUseRaiseLogEntryAddedEvent { get; set; } = true;
+        public static bool EHUseRaiseExceptionCaughtEvent { get; set; } = true;
 
         /// <summary>
         /// 
         /// </summary>
         static ExceptionManagement()
         {
-            ThreadStart threadStart = new ThreadStart(RefreshBufferContinuously);
-            _bufferThread = new Thread(threadStart)
+            ThreadStart threadStart = new(RefreshBufferContinuously);
+            _bufferThread = new(threadStart)
             {
                 IsBackground = true,
                 Name = "Exception Management Buffer Refresh",
                 Priority = ThreadPriority.BelowNormal
             };
 
-            threadStart = new ThreadStart(FlushBufferContinuously);
-            _loggingThread = new Thread(threadStart)
+            threadStart = new(FlushBufferContinuously);
+            _loggingThread = new(threadStart)
             {
                 IsBackground = true,
                 Name = "Exception Management File Flush",
@@ -199,7 +226,8 @@ namespace NET8ExceptionHandler
                     EHLogGenericError(e.Exception);
                     e.SetObserved();
                     _lastCaughtException = e.Exception;
-                    RaiseExceptionCaught(s, e.Exception, true);
+                    if (EHUseRaiseExceptionCaughtEvent)
+                        RaiseExceptionCaught(s, e.Exception, true);
                 }
                 catch (Exception ex)
                 {
@@ -218,7 +246,8 @@ namespace NET8ExceptionHandler
                     // TODO: Maybe it's not a good idea to set every unhandled exception as handled...
                     e.Handled = true;
                     _lastCaughtException = e.Exception;
-                    RaiseExceptionCaught(s, e.Exception, true);
+                    if (EHUseRaiseExceptionCaughtEvent)
+                        RaiseExceptionCaught(s, e.Exception, true);
                 }
                 catch (Exception ex)
                 {
@@ -237,7 +266,8 @@ namespace NET8ExceptionHandler
                     // TODO: Maybe it's not a good idea to set every unhandled exception as handled...
                     e.Handled = true;
                     _lastCaughtException = e.Exception;
-                    RaiseExceptionCaught(s, e.Exception, true);
+                    if (EHUseRaiseExceptionCaughtEvent)
+                        RaiseExceptionCaught(s, e.Exception, true);
                 }
                 catch (Exception ex)
                 {
@@ -279,7 +309,7 @@ namespace NET8ExceptionHandler
                     // EHLogCriticalError("Error occured while logging exception: " + ex.Message);
                 }
 
-                if (!exceptioncaught)
+                if (!exceptioncaught && EHUseRaiseExceptionCaughtEvent)
                 {
                     // See TODO above ...
                     // EHLogCriticalError("Unknown critical exception occured.");
@@ -288,12 +318,12 @@ namespace NET8ExceptionHandler
                 else if (e.IsTerminating)
                 {
                     EHLogCriticalError("App is terminating.");
-                    if (e.ExceptionObject != null)
+                    if (e.ExceptionObject != null && EHUseRaiseExceptionCaughtEvent)
                         RaiseExceptionCaught(s, (Exception)e.ExceptionObject, false, true);
                 }
                 else
                 {
-                    if (e.ExceptionObject != null)
+                    if (e.ExceptionObject != null && EHUseRaiseExceptionCaughtEvent)
                         RaiseExceptionCaught(s, (Exception)e.ExceptionObject);
                 }
             });
@@ -308,7 +338,8 @@ namespace NET8ExceptionHandler
                 {
                     EHLogGenericError(e.Exception);
                     _lastCaughtException = e.Exception;
-                    RaiseExceptionCaught(s, e.Exception);
+                    if (EHUseRaiseExceptionCaughtEvent)
+                        RaiseExceptionCaught(s, e.Exception);
                 }
                 catch (Exception ex)
                 {
@@ -389,12 +420,12 @@ namespace NET8ExceptionHandler
         /// </summary>
         private static void CreateLogFile()
         {
-            if ((_state & ExceptionManagementStates.EMS_FILESTREAM_OPENED) ==
-                ExceptionManagementStates.EMS_FILESTREAM_OPENED)
+            if ((_state & ExceptionManagementStates.EMS_FILEHANDLE_OPENED) ==
+                ExceptionManagementStates.EMS_FILEHANDLE_OPENED)
                 return;
 
-            if ((_state & ExceptionManagementStates.EMS_FILESTREAM_NOT_ACCESSIBLE) ==
-                ExceptionManagementStates.EMS_FILESTREAM_NOT_ACCESSIBLE)
+            if ((_state & ExceptionManagementStates.EMS_FILEHANDLE_NOT_ACCESSIBLE) ==
+                ExceptionManagementStates.EMS_FILEHANDLE_NOT_ACCESSIBLE)
                 return;
 
             if ((_state & ExceptionManagementStates.EMS_DISPOSING) ==
@@ -424,7 +455,7 @@ namespace NET8ExceptionHandler
             }
             catch (Exception ex)
             {
-                _state |= ExceptionManagementStates.EMS_FILESTREAM_NOT_ACCESSIBLE;
+                _state |= ExceptionManagementStates.EMS_FILEHANDLE_NOT_ACCESSIBLE;
                 EHUseFileLogging = false;
                 Debug.Print(ex.Message);
                 if (Console.IsOutputRedirected)
@@ -434,24 +465,21 @@ namespace NET8ExceptionHandler
 
             try
             {
-                _logFileStream?.Flush();
-                _logFileStream?.Close();
-                _logFileStream = null;
-                _logFileStream = logfileinfo.Open(
-                    FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.Read);
+                _fileHandle?.Close();
+                _fileHandle?.Dispose();
+
+                _fileHandle = File.OpenHandle(logfileinfo.FullName, FileMode.OpenOrCreate,
+                    FileAccess.ReadWrite, FileShare.Read, FileOptions.WriteThrough);
 
                 if (newlog)
-                    EHLogDebug("Log created.");
+                    EHLogDebug("--------------------Log created---------------------");
                 else
-                {
-                    _logFileStream.Position = _logFileStream.Length;
-                    EHLogDebug("Log reopened.");
-                }
-                _state |= ExceptionManagementStates.EMS_FILESTREAM_OPENED;
+                    EHLogDebug("--------------------Log reopened--------------------");
+                _state |= ExceptionManagementStates.EMS_FILEHANDLE_OPENED;
             }
             catch (Exception ex)
             {
-                _state |= ExceptionManagementStates.EMS_FILESTREAM_NOT_ACCESSIBLE;
+                _state |= ExceptionManagementStates.EMS_FILEHANDLE_NOT_ACCESSIBLE;
                 EHUseFileLogging = false;
                 Console.WriteLine(ex.Message);
                 return;
@@ -461,16 +489,16 @@ namespace NET8ExceptionHandler
         /// <summary>
         /// 
         /// </summary>
-        private static void CloseFileStream()
+        private static void CloseFileHandle()
         {
-            if ((_state & ExceptionManagementStates.EMS_FILESTREAM_OPENED) ==
-                ExceptionManagementStates.EMS_FILESTREAM_OPENED)
+            if ((_state & ExceptionManagementStates.EMS_FILEHANDLE_OPENED) ==
+                ExceptionManagementStates.EMS_FILEHANDLE_OPENED)
             {
-                _logFileStream?.Close();
-                _logFileStream = null;
+                _fileHandle?.Close();
+                _fileHandle?.Dispose();
                 _state |= ExceptionManagementStates.EMS_DISPOSED;
                 _state ^= ExceptionManagementStates.EMS_DISPOSING;
-                _state ^= ExceptionManagementStates.EMS_FILESTREAM_OPENED;
+                _state ^= ExceptionManagementStates.EMS_FILEHANDLE_OPENED;
             }
         }
 
@@ -496,6 +524,17 @@ namespace NET8ExceptionHandler
         /// <summary>
         /// 
         /// </summary>
+        /// <param name="ex"></param>
+        private static void ProvideExceptionInfoToListeners(Exception ex)
+        {
+            Debug.Print(FormatException(ex));
+            if (Console.IsOutputRedirected)
+                Console.WriteLine(FormatException(ex));
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
         /// <param name="message"></param>
         /// <param name="entryType"></param>
         private static void WriteLogEntry(string message, LogEntryTypes entryType)
@@ -515,7 +554,8 @@ namespace NET8ExceptionHandler
             lock (_logEntries)
                 _logEntries.Enqueue(logmessage);
 
-            RaiseLogDebugAdded(null, logmessage);
+            if (EHUseRaiseLogEntryAddedEvent)
+                RaiseLogEntryAdded(null, logmessage);
         }
 
         /// <summary>
@@ -527,10 +567,10 @@ namespace NET8ExceptionHandler
         /// <returns></returns>
         private static void WriteNextLogEntry()
         {
-            if ((_state & ExceptionManagementStates.EMS_FILESTREAM_OPENED) ==
-                ExceptionManagementStates.EMS_FILESTREAM_OPENED)
+            if ((_state & ExceptionManagementStates.EMS_FILEHANDLE_OPENED) ==
+                ExceptionManagementStates.EMS_FILEHANDLE_OPENED)
             {
-                _state |= ExceptionManagementStates.EMS_ACCESSING_FILESTREAM;
+                _state |= ExceptionManagementStates.EMS_ACCESSING_FILEHANDLE;
 
                 try
                 {
@@ -557,24 +597,24 @@ namespace NET8ExceptionHandler
                     if (Console.IsOutputRedirected)
                         Console.WriteLine(message);
 
-                    if (_logFileStream == null)
+                    if (_fileHandle == null || _fileHandle.IsInvalid || _fileHandle.IsClosed)
                     {
-                        _state ^= ExceptionManagementStates.EMS_FILESTREAM_OPENED;
+                        _state ^= ExceptionManagementStates.EMS_FILEHANDLE_OPENED;
                         throw new ArgumentNullException("File stream is null");
                     }
-                    _logFileStream.Write(buffer, 0, length);
-                    _logFileStream.Flush();
+                    using FileStream stream = new(_fileHandle, FileAccess.Write);
+                    stream.Write(buffer, 0, length);
+                    stream.Flush();
+                    _state ^= ExceptionManagementStates.EMS_ACCESSING_FILEHANDLE;
                 }
                 catch (Exception ex)
                 {
-                    string formattedexception = FormatException(ex);
-                    Debug.Print(formattedexception);
-                    if (Console.IsOutputRedirected)
-                        Console.WriteLine(formattedexception);
-                }
-                finally
-                {
-                    _state ^= ExceptionManagementStates.EMS_ACCESSING_FILESTREAM;
+                    ProvideExceptionInfoToListeners(ex);
+                    _state ^= ExceptionManagementStates.EMS_ACCESSING_FILEHANDLE;
+                    CloseFileHandle();
+                    CreateLogFile();
+
+                    throw;
                 }
             }
         }
@@ -590,39 +630,33 @@ namespace NET8ExceptionHandler
                     ExceptionManagementStates.EMS_DISPOSED)
                 {
                     if (EHUseFileLogging && (_state &
-                        ExceptionManagementStates.EMS_FILESTREAM_OPENED) !=
-                        ExceptionManagementStates.EMS_FILESTREAM_OPENED)
+                        ExceptionManagementStates.EMS_FILEHANDLE_OPENED) !=
+                        ExceptionManagementStates.EMS_FILEHANDLE_OPENED)
                         CreateLogFile();
 
-                    if (!((_state & ExceptionManagementStates.EMS_ACCESSING_FILESTREAM) ==
-                        ExceptionManagementStates.EMS_ACCESSING_FILESTREAM &&
-                        ((_state & ExceptionManagementStates.EMS_FILESTREAM_OPENED) ==
-                        ExceptionManagementStates.EMS_FILESTREAM_OPENED)))
+                    if (!((_state & ExceptionManagementStates.EMS_ACCESSING_FILEHANDLE) ==
+                        ExceptionManagementStates.EMS_ACCESSING_FILEHANDLE &&
+                        ((_state & ExceptionManagementStates.EMS_FILEHANDLE_OPENED) ==
+                        ExceptionManagementStates.EMS_FILEHANDLE_OPENED)))
                     {
-                        try
-                        {
-                            WriteNextLogEntry();
-                        }
-                        catch (Exception ex)
-                        {
-                            Debug.Print(FormatException(ex));
-                            if (Console.IsOutputRedirected)
-                                Console.WriteLine(FormatException(ex));
-                        }
+                        WriteNextLogEntry();
                     }
 
                     if ((_state & ExceptionManagementStates.EMS_DISPOSING) ==
                         ExceptionManagementStates.EMS_DISPOSING)
+                    {
+                        long length = 0;
                         lock (_buffer)
-                            if (_buffer.Length == 0)
-                                CloseFileStream();
+                            length = _buffer.Length;
+                        if (length == 0)
+                            CloseFileHandle();
+                    }
                 }
             }
             catch (Exception ex)
             {
-                Debug.Print(FormatException(ex));
-                if (Console.IsOutputRedirected)
-                    Console.WriteLine(FormatException(ex));
+                ProvideExceptionInfoToListeners(ex);
+                throw;
             }
         }
 
@@ -633,51 +667,41 @@ namespace NET8ExceptionHandler
         {
             try
             {
-                LogMessage logmessage;
-
                 while ((_state & ExceptionManagementStates.EMS_DISPOSED) !=
                     ExceptionManagementStates.EMS_DISPOSED)
                 {
-                    if (((_state & ExceptionManagementStates.EMS_FILESTREAM_OPENED) ==
-                        ExceptionManagementStates.EMS_FILESTREAM_OPENED) &&
+                    if (((_state & ExceptionManagementStates.EMS_FILEHANDLE_OPENED) ==
+                        ExceptionManagementStates.EMS_FILEHANDLE_OPENED) &&
                         !((_state & ExceptionManagementStates.EMS_MESSAGE_BUFFER_FULL) ==
                         ExceptionManagementStates.EMS_MESSAGE_BUFFER_FULL))
                     {
-                        try
-                        {
-                            lock (_logEntries)
-                            {
-                                if (_logEntries.Count > 0)
-                                {
-                                    logmessage = _logEntries.Dequeue();
+                        LogMessage? logmessage = null;
+                        lock (_logEntries)
+                            if (_logEntries.Count > 0)
+                                logmessage = _logEntries.Dequeue();
 
-                                    lock (_buffer)
-                                    {
-                                        byte[] logmessagebytes = Encoding.UTF8.GetBytes(logmessage.ToString());
-                                        _buffer.Write(logmessagebytes, 0, logmessagebytes.Length);
-                                    }
-                                }
-                                else
-                                {
-                                    Thread.Sleep(5);
-                                    continue;
-                                }
+                        if (logmessage != null)
+                        {
+                            string? logtext = logmessage.ToString();
+                            if (logtext != null)
+                            {
+                                byte[] logmessagebytes = Encoding.UTF8.GetBytes(logtext);
+                                lock (_buffer)
+                                    _buffer.Write(logmessagebytes, 0, logmessagebytes.Length);
                             }
                         }
-                        catch (Exception ex)
+                        else
                         {
-                            Debug.Print(FormatException(ex));
-                            if (Console.IsOutputRedirected)
-                                Console.WriteLine(FormatException(ex));
+                            Thread.Sleep(5);
+                            continue;
                         }
                     }
                 }
             }
             catch (Exception ex)
             {
-                Debug.Print(FormatException(ex));
-                if (Console.IsOutputRedirected)
-                    Console.WriteLine(FormatException(ex));
+                ProvideExceptionInfoToListeners(ex);
+                throw;
             }
         }
 
@@ -728,18 +752,10 @@ namespace NET8ExceptionHandler
         /// </summary>
         /// <param name="message"></param>
         /// <param name="formatParameters"></param>
-        public static void EHLogDebug(string message, params object[] formatParameters)
+        public static void EHLogDebug(string message)
         {
             if (_includeDebugInformation)
-            {
-                if (formatParameters != null && formatParameters.Length > 0)
-                {
-                    CorrectNullOrEmpty(ref formatParameters);
-                    WriteLogEntry(string.Format(message, formatParameters), LogEntryTypes.DEBUG);
-                }
-                else
                     WriteLogEntry(message, LogEntryTypes.DEBUG);
-            }
         }
 
         /// <summary>
@@ -747,15 +763,9 @@ namespace NET8ExceptionHandler
         /// </summary>
         /// <param name="message"></param>
         /// <param name="formatParameters"></param>
-        public static void EHLogInfo(string message, params object[] formatParameters)
+        public static void EHLogInfo(string message)
         {
-            if (formatParameters != null && formatParameters.Length > 0)
-            {
-                CorrectNullOrEmpty(ref formatParameters);
-                WriteLogEntry(string.Format(message, formatParameters), LogEntryTypes.INFO);
-            }
-            else
-                WriteLogEntry(message, LogEntryTypes.INFO);
+            WriteLogEntry(message, LogEntryTypes.INFO);
         }
 
         /// <summary>
@@ -763,16 +773,9 @@ namespace NET8ExceptionHandler
         /// </summary>
         /// <param name="message"></param>
         /// <param name="formatParameters"></param>
-        public static void EHLogWarning(string message, params object[] formatParameters)
+        public static void EHLogWarning(string message)
         {
-            if (formatParameters != null && formatParameters.Length > 0)
-            {
-                CorrectNullOrEmpty(ref formatParameters);
-                WriteLogEntry(string.Format(message, formatParameters),
-                    LogEntryTypes.WARNING);
-            }
-            else
-                WriteLogEntry(message, LogEntryTypes.WARNING);
+            WriteLogEntry(message, LogEntryTypes.WARNING);
         }
 
         /// <summary>
@@ -787,17 +790,9 @@ namespace NET8ExceptionHandler
         /// </summary>
         /// <param name="message"></param>
         /// <param name="formatParameters"></param>
-        public static void EHLogGenericError(string message,
-            params object[] formatParameters)
+        public static void EHLogGenericError(string message)
         {
-            if (formatParameters != null && formatParameters.Length > 0)
-            {
-                CorrectNullOrEmpty(ref formatParameters);
-                WriteLogEntry(string.Format(message, formatParameters),
-                    LogEntryTypes.GENERIC_ERROR);
-            }
-            else
-                WriteLogEntry(message, LogEntryTypes.GENERIC_ERROR);
+            WriteLogEntry(message, LogEntryTypes.GENERIC_ERROR);
         }
 
         /// <summary>
@@ -812,17 +807,9 @@ namespace NET8ExceptionHandler
         /// </summary>
         /// <param name="message"></param>
         /// <param name="formatParameters"></param>
-        public static void EHLogCriticalError(string message,
-            params object[] formatParameters)
+        public static void EHLogCriticalError(string message)
         {
-            if (formatParameters != null && formatParameters.Length > 0)
-            {
-                CorrectNullOrEmpty(ref formatParameters);
-                WriteLogEntry(string.Format(message, formatParameters),
-                    LogEntryTypes.CRITICAL_ERROR);
-            }
-            else
-                WriteLogEntry(message, LogEntryTypes.CRITICAL_ERROR);
+            WriteLogEntry(message, LogEntryTypes.CRITICAL_ERROR);
         }
 
         /// <summary>
@@ -833,19 +820,9 @@ namespace NET8ExceptionHandler
         /// <param name="owner"></param>
         /// <param name="formatParameters"></param>
         public static void EHMsgBox(LogEntryTypes type, string message,
-            Window? owner = null, params object[] formatParameters)
+            Window? owner = null)
         {
-            string formattedmessage;
-
-            if (formatParameters != null && formatParameters.Length > 0)
-            {
-                CorrectNullOrEmpty(ref formatParameters);
-                formattedmessage = string.Format(message, formatParameters);
-            }
-            else
-                formattedmessage = message;
-
-            WriteLogEntry(formattedmessage, type);
+            WriteLogEntry(message, type);
             string title = "Info";
             MessageBoxImage severityimage = MessageBoxImage.Information;
             switch (type)
@@ -861,10 +838,10 @@ namespace NET8ExceptionHandler
             }
 
             if (owner != null)
-                MessageBox.Show(owner, formattedmessage, title,
+                MessageBox.Show(owner, message, title,
                     MessageBoxButton.OK, severityimage);
             else
-                MessageBox.Show(formattedmessage, title,
+                MessageBox.Show(message, title,
                     MessageBoxButton.OK, severityimage);
         }
 
@@ -876,25 +853,15 @@ namespace NET8ExceptionHandler
         /// <param name="formatParameters"></param>
         /// <returns></returns>
         public static MessageBoxResult EHMsgBoxYesNo(string message,
-            Window? owner = null, params object[] formatParameters)
+            Window? owner = null)
         {
-            string formattedmessage;
-
-            if (formatParameters != null && formatParameters.Length > 0)
-            {
-                CorrectNullOrEmpty(ref formatParameters);
-                formattedmessage = string.Format(message, formatParameters);
-            }
-            else
-                formattedmessage = message;
-
-            WriteLogEntry(formattedmessage, LogEntryTypes.INFO);
+            WriteLogEntry(message, LogEntryTypes.INFO);
             if (owner != null)
-                return MessageBox.Show(owner, formattedmessage, "Question",
+                return MessageBox.Show(owner, message, "Question",
                     MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.Yes,
                     MessageBoxOptions.DefaultDesktopOnly);
             else
-                return MessageBox.Show(formattedmessage, "Question", MessageBoxButton.YesNo,
+                return MessageBox.Show(message, "Question", MessageBoxButton.YesNo,
                     MessageBoxImage.Question, MessageBoxResult.Yes,
                     MessageBoxOptions.DefaultDesktopOnly);
         }
@@ -948,8 +915,11 @@ namespace NET8ExceptionHandler
         /// <summary>
         /// 
         /// </summary>
-        /// <param name="hr"></param>
-        /// <returns></returns>
+        /// <param name="ex"></param>
+        /// <param name="functionName"></param>
+        /// <param name="propertyName"></param>
+        /// <param name="message"></param>
+        /// <param name="criticalError"></param>
         public static void SafeLogException(Exception ex, string functionName,
             string propertyName, string message, bool criticalError)
         {
@@ -983,9 +953,8 @@ namespace NET8ExceptionHandler
         /// <summary>
         /// 
         /// </summary>
-        /// <remarks>
-        /// 
-        /// </remarks>
+        /// <param name="timestamp"></param>
+        /// <param name="threadName"></param>
         /// <param name="message"></param>
         /// <param name="entryType"></param>
         public struct LogMessage(DateTime timestamp, string? threadName,
@@ -1024,11 +993,8 @@ namespace NET8ExceptionHandler
         /// <summary>
         /// 
         /// </summary>
-        /// <remarks>
-        /// 
-        /// </remarks>
         /// <param name="entry"></param>
-        public class LogDebugAddedEventArgs(LogMessage entry)
+        public class LogEntryAddedEventArgs(LogMessage entry)
         {
             /// <summary>
             /// 
@@ -1042,10 +1008,10 @@ namespace NET8ExceptionHandler
             /// <returns></returns>
             public override bool Equals(object? obj)
             {
-                if (obj is not LogDebugAddedEventArgs)
+                if (obj is not LogEntryAddedEventArgs)
                     return false;
 
-                LogDebugAddedEventArgs args = (LogDebugAddedEventArgs)obj;
+                LogEntryAddedEventArgs args = (LogEntryAddedEventArgs)obj;
                 return Entry.Equals(args.Entry);
             }
 
