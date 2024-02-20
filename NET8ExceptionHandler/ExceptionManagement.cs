@@ -2,7 +2,6 @@
 // Copyright (c) 2024 Toni Lihs
 // Licensed under MIT License
 
-using Microsoft.VisualStudio;
 using Microsoft.Win32.SafeHandles;
 using System.Diagnostics;
 using System.IO;
@@ -36,12 +35,12 @@ namespace NET8ExceptionHandler
         public enum ExceptionManagementStates
         {
             EMS_INITIALIZED = 0x0001,
+            EMS_DISPOSING = 0x0010,
+            EMS_DISPOSED = 0x0020,
             EMS_FILEHANDLE_OPENED = 0x0100,
             EMS_ACCESSING_FILEHANDLE = 0x0200,
             EMS_FILEHANDLE_NOT_ACCESSIBLE = 0x0400,
-            EMS_MESSAGE_BUFFER_FULL = 0x0800,
-            EMS_DISPOSING = 0x0010,
-            EMS_DISPOSED = 0x0020
+            EMS_MESSAGE_BUFFER_FULL = 0x0800
         }
 
         /// <summary>
@@ -359,8 +358,10 @@ namespace NET8ExceptionHandler
                 _state |= ExceptionManagementStates.EMS_DISPOSING;
                 _state ^= ExceptionManagementStates.EMS_INITIALIZED;
 
-                _loggingThread.Join();
                 _bufferThread.Join();
+                _loggingThread.Join();
+
+                CloseFileHandle();
             });
 
             if (app != Application.Current)
@@ -587,10 +588,7 @@ namespace NET8ExceptionHandler
                     }
 
                     if (length == 0)
-                    {
-                        Thread.Sleep(10);
                         return;
-                    }
 
                     string message = Encoding.UTF8.GetString(buffer).TrimEnd(_NEW_LINE_CHARS);
                     Debug.Print(message);
@@ -598,10 +596,7 @@ namespace NET8ExceptionHandler
                         Console.WriteLine(message);
 
                     if (_fileHandle == null || _fileHandle.IsInvalid || _fileHandle.IsClosed)
-                    {
-                        _state ^= ExceptionManagementStates.EMS_FILEHANDLE_OPENED;
                         throw new ArgumentNullException("File stream is null");
-                    }
                     using FileStream stream = new(_fileHandle, FileAccess.Write);
                     stream.Write(buffer, 0, length);
                     stream.Flush();
@@ -611,8 +606,7 @@ namespace NET8ExceptionHandler
                 {
                     ProvideExceptionInfoToListeners(ex);
                     _state ^= ExceptionManagementStates.EMS_ACCESSING_FILEHANDLE;
-                    CloseFileHandle();
-                    CreateLogFile();
+                    _state |= ExceptionManagementStates.EMS_DISPOSING;
 
                     throw;
                 }
@@ -634,22 +628,36 @@ namespace NET8ExceptionHandler
                         ExceptionManagementStates.EMS_FILEHANDLE_OPENED)
                         CreateLogFile();
 
-                    if (!((_state & ExceptionManagementStates.EMS_ACCESSING_FILEHANDLE) ==
+                    if ((_state & ExceptionManagementStates.EMS_ACCESSING_FILEHANDLE) !=
                         ExceptionManagementStates.EMS_ACCESSING_FILEHANDLE &&
-                        ((_state & ExceptionManagementStates.EMS_FILEHANDLE_OPENED) ==
-                        ExceptionManagementStates.EMS_FILEHANDLE_OPENED)))
+                        (_state & ExceptionManagementStates.EMS_FILEHANDLE_OPENED) ==
+                        ExceptionManagementStates.EMS_FILEHANDLE_OPENED)
                     {
                         WriteNextLogEntry();
+                    }
+                    else
+                    {
+                        Thread.Sleep(5);
                     }
 
                     if ((_state & ExceptionManagementStates.EMS_DISPOSING) ==
                         ExceptionManagementStates.EMS_DISPOSING)
                     {
                         long length = 0;
-                        lock (_buffer)
-                            length = _buffer.Length;
+
+                        if ((_state & ExceptionManagementStates.EMS_ACCESSING_FILEHANDLE) !=
+                            ExceptionManagementStates.EMS_ACCESSING_FILEHANDLE &&
+                            (_state & ExceptionManagementStates.EMS_FILEHANDLE_OPENED) ==
+                            ExceptionManagementStates.EMS_FILEHANDLE_OPENED &&
+                            (_state & ExceptionManagementStates.EMS_MESSAGE_BUFFER_FULL) !=
+                            ExceptionManagementStates.EMS_MESSAGE_BUFFER_FULL)
+                        {
+                            lock (_buffer)
+                                length = _buffer.Length;
+                        }
+
                         if (length == 0)
-                            CloseFileHandle();
+                            break;
                     }
                 }
             }
@@ -668,12 +676,14 @@ namespace NET8ExceptionHandler
             try
             {
                 while ((_state & ExceptionManagementStates.EMS_DISPOSED) !=
-                    ExceptionManagementStates.EMS_DISPOSED)
+                    ExceptionManagementStates.EMS_DISPOSED &&
+                    (_state & ExceptionManagementStates.EMS_DISPOSING) !=
+                    ExceptionManagementStates.EMS_DISPOSING)
                 {
-                    if (((_state & ExceptionManagementStates.EMS_FILEHANDLE_OPENED) ==
-                        ExceptionManagementStates.EMS_FILEHANDLE_OPENED) &&
-                        !((_state & ExceptionManagementStates.EMS_MESSAGE_BUFFER_FULL) ==
-                        ExceptionManagementStates.EMS_MESSAGE_BUFFER_FULL))
+                    if ((_state & ExceptionManagementStates.EMS_FILEHANDLE_OPENED) ==
+                        ExceptionManagementStates.EMS_FILEHANDLE_OPENED &&
+                        (_state & ExceptionManagementStates.EMS_MESSAGE_BUFFER_FULL) !=
+                        ExceptionManagementStates.EMS_MESSAGE_BUFFER_FULL)
                     {
                         LogMessage? logmessage = null;
                         lock (_logEntries)
@@ -693,8 +703,11 @@ namespace NET8ExceptionHandler
                         else
                         {
                             Thread.Sleep(5);
-                            continue;
                         }
+                    }
+                    else
+                    {
+                        Thread.Sleep(5);
                     }
                 }
             }
@@ -877,7 +890,7 @@ namespace NET8ExceptionHandler
             try
             {
                 action.Invoke();
-                return VSConstants.S_OK;
+                return 0;
             }
             catch (Exception ex)
             {
@@ -900,7 +913,7 @@ namespace NET8ExceptionHandler
             try
             {
                 bool result = action.Invoke();
-                return result ? VSConstants.S_OK : VSConstants.S_FALSE;
+                return result ? 0 : 1;
             }
             catch (Exception ex)
             {
