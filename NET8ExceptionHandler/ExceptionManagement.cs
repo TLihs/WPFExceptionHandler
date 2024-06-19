@@ -3,6 +3,7 @@
 // Licensed under MIT License
 
 using Microsoft.Win32.SafeHandles;
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.IO;
 using System.Runtime.ExceptionServices;
@@ -140,7 +141,7 @@ namespace NET8ExceptionHandler
         private static SafeFileHandle? _fileHandle = null;
         private static Exception? _lastCaughtException = null;
         private static ExceptionManagementStates _state = 0;
-        private static readonly Queue<LogMessage> _logEntries = new();
+        private static readonly ConcurrentQueue<LogMessage> _logEntries = new();
         private static readonly Thread _loggingThread;
         private static readonly MemoryStream _buffer = new();
         private static readonly Thread _bufferThread;
@@ -466,17 +467,12 @@ namespace NET8ExceptionHandler
 
             try
             {
-                _fileHandle?.Close();
-                _fileHandle?.Dispose();
-
-                _fileHandle = File.OpenHandle(logfileinfo.FullName, FileMode.OpenOrCreate,
-                    FileAccess.ReadWrite, FileShare.Read, FileOptions.WriteThrough);
+                OpenFileHandle();
 
                 if (newlog)
-                    EHLogDebug("--------------------Log created---------------------");
+                    EHLogInfo("--------------------Log created---------------------");
                 else
-                    EHLogDebug("--------------------Log reopened--------------------");
-                _state |= ExceptionManagementStates.EMS_FILEHANDLE_OPENED;
+                    EHLogInfo("--------------------Log reopened--------------------");
             }
             catch (Exception ex)
             {
@@ -484,6 +480,34 @@ namespace NET8ExceptionHandler
                 EHUseFileLogging = false;
                 Console.WriteLine(ex.Message);
                 return;
+            }
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        private static void OpenFileHandle()
+        {
+            try
+            {
+                if (_fileHandle == null || _fileHandle.IsClosed)
+                {
+                    _fileHandle?.Close();
+                    _fileHandle?.Dispose();
+
+                    _fileHandle = File.OpenHandle(EHExceptionLogFilePath, FileMode.OpenOrCreate,
+                        FileAccess.ReadWrite, FileShare.Read, FileOptions.WriteThrough);
+                }
+
+                _state |= ExceptionManagementStates.EMS_FILEHANDLE_OPENED;
+            }
+            catch (Exception e)
+            {
+                ProvideExceptionInfoToListeners(e);
+                _state ^= ExceptionManagementStates.EMS_ACCESSING_FILEHANDLE;
+                _state |= ExceptionManagementStates.EMS_DISPOSING;
+
+                throw;
             }
         }
 
@@ -515,11 +539,9 @@ namespace NET8ExceptionHandler
         {
             string? logentrytype = Enum.GetName(typeof(LogEntryTypes), entryType);
             if (string.IsNullOrEmpty(threadName))
-                return $"{timeStamp:yyyy-MM-dd hh:mm:ss.fff}: " +
-                    $"({logentrytype}) {message}\r\n";
+                return $"{timeStamp:yyyy-MM-dd hh:mm:ss.fff}: ({logentrytype}) {message}\r\n";
             else
-                return $"{timeStamp:yyyy-MM-dd hh:mm:ss.fff}: " +
-                    $"[{threadName}] ({logentrytype}) {message}\r\n";
+                return $"{timeStamp:yyyy-MM-dd hh:mm:ss.fff}: [{threadName}] ({logentrytype}) {message}\r\n";
         }
 
         /// <summary>
@@ -552,8 +574,7 @@ namespace NET8ExceptionHandler
             LogMessage logmessage = new(DateTime.Now,
                 Thread.CurrentThread.Name, message, entryType);
 
-            lock (_logEntries)
-                _logEntries.Enqueue(logmessage);
+            _logEntries.Enqueue(logmessage);
 
             if (EHUseRaiseLogEntryAddedEvent)
                 RaiseLogEntryAdded(null, logmessage);
@@ -571,8 +592,6 @@ namespace NET8ExceptionHandler
             if ((_state & ExceptionManagementStates.EMS_FILEHANDLE_OPENED) ==
                 ExceptionManagementStates.EMS_FILEHANDLE_OPENED)
             {
-                _state |= ExceptionManagementStates.EMS_ACCESSING_FILEHANDLE;
-
                 try
                 {
                     byte[] buffer;
@@ -588,18 +607,27 @@ namespace NET8ExceptionHandler
                     }
 
                     if (length == 0)
+                    {
+                        Thread.Sleep(10);
                         return;
+                    }
 
                     string message = Encoding.UTF8.GetString(buffer).TrimEnd(_NEW_LINE_CHARS);
                     Debug.Print(message);
                     if (Console.IsOutputRedirected)
                         Console.WriteLine(message);
 
-                    if (_fileHandle == null || _fileHandle.IsInvalid || _fileHandle.IsClosed)
-                        throw new ArgumentNullException("File stream is null");
+                    _state |= ExceptionManagementStates.EMS_ACCESSING_FILEHANDLE;
+
+                    if (_fileHandle == null || _fileHandle.IsInvalid)
+                        throw new Exception("File stream is null");
+
+                    OpenFileHandle();
                     using FileStream stream = new(_fileHandle, FileAccess.Write);
+                    stream.Seek(0, SeekOrigin.End);
                     stream.Write(buffer, 0, length);
                     stream.Flush();
+
                     _state ^= ExceptionManagementStates.EMS_ACCESSING_FILEHANDLE;
                 }
                 catch (Exception ex)
@@ -626,7 +654,9 @@ namespace NET8ExceptionHandler
                     if (EHUseFileLogging && (_state &
                         ExceptionManagementStates.EMS_FILEHANDLE_OPENED) !=
                         ExceptionManagementStates.EMS_FILEHANDLE_OPENED)
+                    {
                         CreateLogFile();
+                    }
 
                     if ((_state & ExceptionManagementStates.EMS_ACCESSING_FILEHANDLE) !=
                         ExceptionManagementStates.EMS_ACCESSING_FILEHANDLE &&
@@ -636,9 +666,7 @@ namespace NET8ExceptionHandler
                         WriteNextLogEntry();
                     }
                     else
-                    {
-                        Thread.Sleep(5);
-                    }
+                        Thread.Sleep(20);
 
                     if ((_state & ExceptionManagementStates.EMS_DISPOSING) ==
                         ExceptionManagementStates.EMS_DISPOSING)
@@ -685,12 +713,7 @@ namespace NET8ExceptionHandler
                         (_state & ExceptionManagementStates.EMS_MESSAGE_BUFFER_FULL) !=
                         ExceptionManagementStates.EMS_MESSAGE_BUFFER_FULL)
                     {
-                        LogMessage? logmessage = null;
-                        lock (_logEntries)
-                            if (_logEntries.Count > 0)
-                                logmessage = _logEntries.Dequeue();
-
-                        if (logmessage != null)
+                        if (_logEntries.TryDequeue(out LogMessage logmessage))
                         {
                             string? logtext = logmessage.ToString();
                             if (logtext != null)
@@ -698,17 +721,12 @@ namespace NET8ExceptionHandler
                                 byte[] logmessagebytes = Encoding.UTF8.GetBytes(logtext);
                                 lock (_buffer)
                                     _buffer.Write(logmessagebytes, 0, logmessagebytes.Length);
+                                continue;
                             }
                         }
-                        else
-                        {
-                            Thread.Sleep(5);
-                        }
                     }
-                    else
-                    {
-                        Thread.Sleep(5);
-                    }
+
+                    Thread.Sleep(10);
                 }
             }
             catch (Exception ex)
@@ -768,7 +786,7 @@ namespace NET8ExceptionHandler
         public static void EHLogDebug(string message)
         {
             if (_includeDebugInformation)
-                    WriteLogEntry(message, LogEntryTypes.DEBUG);
+                WriteLogEntry(message, LogEntryTypes.DEBUG);
         }
 
         /// <summary>
